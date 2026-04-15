@@ -17,6 +17,8 @@ Setup guide: [SETUP.md](SETUP.md)
 
 Patch-bundle schema: [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md)
 
+Backup restore guide: [BACKUP_RESTORE.md](BACKUP_RESTORE.md)
+
 Run the full local health checkpoint:
 
 ```bash
@@ -148,6 +150,8 @@ Design rules:
 - Page quality reports are deterministic local queues for editorial review.
 - Patch bundle target schema and rollback safety rules are documented in
   [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md).
+- Patch-bundle restore operations are documented in
+  [BACKUP_RESTORE.md](BACKUP_RESTORE.md).
 - Real patch-bundle applies require the bundle/catalog scan root to match
   `--wiki-root`; mirror-backed catalogs are for read/build work until rescanned
   against the intended write root.

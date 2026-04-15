@@ -299,3 +299,6 @@ Rollback is intentionally conservative:
   rollback.
 
 These checks keep rollback from erasing unrelated user edits.
+
+For the operator restore workflow, blocker meanings, and manual restore
+guidance, see [BACKUP_RESTORE.md](BACKUP_RESTORE.md).
