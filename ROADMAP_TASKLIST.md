@@ -15,12 +15,13 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
 - [x] Latest scan run: `scan:20260415T102707Z:f4351838b68707a7`.
-- [x] Latest harness run: `run:20260415T104333Z:4be3b4fc6f51c811`.
+- [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `6c46fb0` (`Add backup restore guide`).
-- [ ] Current active task: add bounded JSON-RPC methods for `harness.run` and
-  `harness.show`.
+- [x] Latest source checkpoint: `c20fd4f` (`Add harness JSON-RPC methods`).
+- [ ] Current active task: add release notes for the first usable build.
+- [x] JSON-RPC harness API status: complete; `harness.run` and `harness.show`
+  return bounded answer and trace summaries.
 - [x] Backup restore docs status: complete; operator restore workflow and
   rollback blocker meanings are documented in `BACKUP_RESTORE.md`.
 - [x] Broken-link regression status: complete; eval runs now fail when the
@@ -183,8 +184,8 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Add bounded method for `span.listHeadings`.
 - [x] Add bounded method for `link.findReferences`.
 - [x] Add bounded method for `audit.summary`.
-- [ ] Add bounded method for `harness.run`.
-- [ ] Add bounded method for `harness.show`.
+- [x] Add bounded method for `harness.run`.
+- [x] Add bounded method for `harness.show`.
 - [x] Record query traces and policy decisions.
 - [x] Return handles and spans by default instead of whole documents.
 - [x] Add tests for API response limits.
@@ -235,16 +236,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
-2. [ ] Add release notes for the first usable build.
-3. [ ] Build a report of generated stubs that still need human content.
-4. [ ] Add project-level librarian reports.
-5. [ ] Add stale-scan detection when the NAS has changed after the last catalog
+1. [ ] Add release notes for the first usable build.
+2. [ ] Build a report of generated stubs that still need human content.
+3. [ ] Add project-level librarian reports.
+4. [ ] Add stale-scan detection when the NAS has changed after the last catalog
    build.
-6. [ ] Compare retrieval profiles before changing search behavior.
-7. [ ] Use eval results to choose cleanup targets instead of relying on memory.
-8. [ ] Add optional scheduled scan/audit runner.
-9. [ ] Add package entry point if CLI use becomes frequent.
+5. [ ] Compare retrieval profiles before changing search behavior.
+6. [ ] Use eval results to choose cleanup targets instead of relying on memory.
+7. [ ] Add optional scheduled scan/audit runner.
+8. [ ] Add package entry point if CLI use becomes frequent.
+9. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
+   wiki.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -288,6 +290,8 @@ API:
 
 ```bash
 python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method":"symbol.search","params":{"query":"adapter boundary"}}' --json
+python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method":"harness.run","params":{"query":"adapter boundary"}}' --json
+python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method":"harness.show","params":{"run_id":"<run_id>"}}' --json
 python3 -m wiki_tool api serve
 ```
 
