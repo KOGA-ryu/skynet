@@ -18,7 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T091149Z:897e722f4b59f5ea`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `bc108cf` (`Add bounded JSON-RPC knowledge API`).
+- [x] Latest source checkpoint: `129d086` (`Add wiki setup guide`).
 - [ ] Current active task: add page quality reports for thin notes, missing
   summaries, and unclear hub pages.
 - [x] Project report implementation status: complete, with 7 top-level projects
