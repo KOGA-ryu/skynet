@@ -19,7 +19,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `d481b55` (`Expand wiki eval query set`).
-- [ ] Current active task: build eval runner and recurring retrieval quality report.
+- [ ] Current active task: add the first bounded knowledge API surface.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -151,11 +151,11 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Expand the gold query set to at least 30 wiki queries.
 - [x] Mark expected documents, evidence hints, and citation requirements for
   each eval query.
-- [ ] Build eval runner over the catalog and harness.
-- [ ] Score retrieval hit rate.
-- [ ] Score citation validity.
+- [x] Build eval runner over the catalog and harness.
+- [x] Score retrieval hit rate.
+- [x] Score citation validity.
 - [ ] Score broken-link regression.
-- [ ] Produce repeatable eval reports.
+- [x] Produce repeatable eval reports.
 - [ ] Compare retrieval profiles before changing search behavior.
 - [ ] Use eval results to choose cleanup targets instead of relying on memory.
 
@@ -220,17 +220,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Build eval runner and recurring retrieval quality report.
-2. [ ] Add the first bounded knowledge API surface.
-3. [ ] Add install/setup instructions.
-4. [ ] Add page quality reports for thin notes, missing summaries, and unclear
+1. [ ] Add the first bounded knowledge API surface.
+2. [ ] Add install/setup instructions.
+3. [ ] Add page quality reports for thin notes, missing summaries, and unclear
    hub pages.
-5. [ ] Add richer bundle schema docs.
-6. [ ] Add preflight check that refuses writes when catalog root and bundle root
+4. [ ] Add richer bundle schema docs.
+5. [ ] Add preflight check that refuses writes when catalog root and bundle root
    disagree.
-7. [ ] Tighten contract and schema validation.
-8. [ ] Add trace diffing between harness runs.
-9. [ ] Add backup restore docs.
+6. [ ] Tighten contract and schema validation.
+7. [ ] Add trace diffing between harness runs.
+8. [ ] Add backup restore docs.
+9. [ ] Add broken-link regression scoring to eval reports.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -249,6 +249,13 @@ python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic
 python3 -m wiki_tool harness answer "adapter boundary" --synthesis openai --llm-model gpt-5.4-mini --json
 python3 -m wiki_tool harness runs --json
 python3 -m wiki_tool harness show <run_id> --json
+```
+
+Eval:
+
+```bash
+python3 -m wiki_tool eval run --json
+python3 -m wiki_tool eval run --write-report --json
 ```
 
 Link queues:

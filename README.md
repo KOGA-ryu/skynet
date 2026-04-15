@@ -60,6 +60,8 @@ python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic
 python3 -m wiki_tool harness answer "adapter boundary" --synthesis openai --llm-model gpt-5.4-mini --json
 python3 -m wiki_tool harness runs --json
 python3 -m wiki_tool harness show <run_id> --json
+python3 -m wiki_tool eval run --json
+python3 -m wiki_tool eval run --write-report --json
 ```
 
 Portable code references:

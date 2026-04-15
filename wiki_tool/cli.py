@@ -31,6 +31,7 @@ from wiki_tool.devrefs import (
     is_dev_uri,
     resolve_dev_uri,
 )
+from wiki_tool.eval import DEFAULT_EVAL_FILE, DEFAULT_EVAL_REPORT_DIR, run_eval
 from wiki_tool.file_links import build_file_links_patch_bundle, file_link_audit
 from wiki_tool.harness import (
     DEFAULT_HARNESS_DB,
@@ -206,6 +207,20 @@ def build_parser() -> argparse.ArgumentParser:
     explain.add_argument("query")
     explain.add_argument("--limit", type=int, default=5)
     explain.set_defaults(func=cmd_explain)
+
+    eval_cmd = sub.add_parser("eval", help="wiki eval helpers")
+    add_json_flag(eval_cmd)
+    eval_sub = eval_cmd.add_subparsers(required=True)
+    eval_run = eval_sub.add_parser("run", help="run the wiki eval query set")
+    add_json_flag(eval_run)
+    eval_run.add_argument("--eval-file", type=Path, default=DEFAULT_EVAL_FILE)
+    eval_run.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    eval_run.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    eval_run.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
+    eval_run.add_argument("--limit", type=int)
+    eval_run.add_argument("--write-report", action="store_true")
+    eval_run.add_argument("--report-dir", type=Path, default=DEFAULT_EVAL_REPORT_DIR)
+    eval_run.set_defaults(func=cmd_eval_run)
 
     harness = sub.add_parser("harness", help="executable harness helpers")
     add_json_flag(harness)
@@ -473,6 +488,18 @@ def cmd_harness_runs(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_harness_show(args: argparse.Namespace) -> dict[str, Any]:
     return get_harness_run(args.run_id, args.harness_db)
+
+
+def cmd_eval_run(args: argparse.Namespace) -> dict[str, Any]:
+    return run_eval(
+        eval_file=args.eval_file,
+        catalog_db=args.catalog_db,
+        harness_db=args.harness_db,
+        spec_dir=args.spec_dir,
+        limit=args.limit,
+        write_report=args.write_report,
+        report_dir=args.report_dir,
+    )
 
 
 def cmd_patch_validate(args: argparse.Namespace) -> dict[str, Any]:
