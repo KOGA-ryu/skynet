@@ -34,6 +34,8 @@ APIs.
   generated state artifacts.
 - Source shelf reports inventory the local math and computer source shelves,
   flag weak source notes, and build a local staging queue before NAS promotion.
+- Computer source shelf cleanup bundles can now add exact source-summary blocks
+  and remove reviewed generated placeholder pages in the local mirror.
 - Page-quality queues include a focused generated-stub report for placeholder
   Markdown pages that still need human-written content.
 - Patch bundles provide the guarded path for NAS edits with validation, dry-run
@@ -115,6 +117,7 @@ python3 -m wiki_tool source-shelves summary --json
 python3 -m wiki_tool source-shelves show math --json
 python3 -m wiki_tool source-shelves show computer --json
 python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --json
+python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 ```
@@ -148,6 +151,7 @@ The release checkpoint should pass:
 python3 -m unittest discover -s tests
 python3 -m compileall wiki_tool tests
 python3 -m wiki_tool source-shelves summary --json
+python3 -m wiki_tool patch-bundle report backups/<bundle>/manifest.json --wiki-root state/wiki_mirror --json
 python3 -m wiki_tool scheduled-audit run --json
 python3 -m wiki_tool audit --json
 git diff --check

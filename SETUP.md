@@ -95,7 +95,7 @@ Ignored local outputs:
 - `state/source_shelf_reports/`: optional local math/computer source shelf
   reports for staging-library cleanup.
 - `backups/`: NAS edit backups from applied patch bundles.
-- `patch_bundles/`: reviewable NAS edit plans.
+- `patch_bundles/`: reviewable local or NAS edit plans.
 
 These files are intentionally not committed. Rebuild them from the NAS wiki and
 source-controlled tooling when needed.
@@ -121,8 +121,11 @@ scan. Any NAS write should go through the patch-bundle flow:
 
 Schema details and supported target types are documented in
 [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md).
+Local source-shelf cleanup bundles should be applied to `state/wiki_mirror`
+first; use `/Volumes/wiki` only during an explicit promotion pass.
 
 ```bash
+python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
 python3 -m wiki_tool patch-bundle validate patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --json
 python3 -m wiki_tool patch-bundle report patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --json
 python3 -m wiki_tool patch-bundle apply patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --dry-run --json

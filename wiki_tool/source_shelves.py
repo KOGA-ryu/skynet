@@ -3,18 +3,54 @@ from __future__ import annotations
 from collections import defaultdict
 from contextlib import closing
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path, PurePosixPath
 import re
 import sqlite3
 from typing import Any
 
-from wiki_tool.catalog import DEFAULT_DB
+from wiki_tool.catalog import DEFAULT_DB, latest_scan_run
 from wiki_tool.page_quality import build_page_quality_report
 
 
+DEFAULT_SOURCE_SHELF_CLEANUP_BUNDLE = Path("patch_bundles/source_shelves_computer_cleanup.json")
 DEFAULT_SOURCE_SHELF_REPORT_DIR = Path("state/source_shelf_reports")
 DEFAULT_SOURCE_SHELF_LIMIT = 25
 DEFAULT_SOURCE_SHELVES = ("math", "computer")
+COMPUTER_SOURCE_SUMMARIES = {
+    "sources/computer/audio_shader_studio_patterns.md": (
+        "Use this pattern note when a design needs to turn streaming inputs into named rolling "
+        "features, thresholds, triggers, and reusable downstream signal surfaces."
+    ),
+    "sources/computer/arch_patterns.md": (
+        "Use this pattern note when volatility modeling needs explicit diagnostics, stationarity "
+        "checks, bootstrap tools, and covariance estimators instead of a single opaque risk signal."
+    ),
+    "sources/computer/field_generation_patterns.md": (
+        "Use this pattern note when local vector-field rules, perturbations, and particle traces "
+        "need to explain how repeated local updates create global structure."
+    ),
+    "sources/computer/filterpy_patterns.md": (
+        "Use this pattern note when latent-state estimation needs a clear prediction/update loop, "
+        "measurement uncertainty, smoothing, and recursive inference boundaries."
+    ),
+    "sources/computer/libqalculate_patterns.md": (
+        "Use this pattern note when calculator-engine design needs clean boundaries between parsing, "
+        "symbolic structure, precision policy, units, definitions, and thin interface shells."
+    ),
+    "sources/computer/option_pricing_patterns.md": (
+        "Use this pattern note when an option-pricing system needs a stable instrument interface "
+        "with explicit analytical, tree-based, and Monte Carlo method selection."
+    ),
+    "sources/computer/pyportfolioopt_patterns.md": (
+        "Use this pattern note when portfolio construction needs separate return estimates, risk "
+        "models, objectives, constraints, and allocation translation layers."
+    ),
+    "sources/computer/quantlib_patterns.md": (
+        "Use this pattern note when a later heavyweight pricing framework needs separation between "
+        "instruments, pricing engines, market objects, and reusable numerical layers."
+    ),
+}
 
 
 def source_shelf_summary(
@@ -154,6 +190,140 @@ def write_source_shelf_reports(
         "thin_note_count": summary["thin_note_count"],
         "total_source_notes": summary["total_source_notes"],
         "weak_summary_count": summary["weak_summary_count"],
+    }
+
+
+def build_source_shelf_cleanup_bundle(
+    db_path: Path = DEFAULT_DB,
+    *,
+    shelf: str = "computer",
+) -> dict[str, Any]:
+    normalized = normalize_shelf(shelf)
+    if normalized != "computer":
+        raise ValueError("source shelf cleanup bundles currently support only the computer shelf")
+    scan_run = latest_scan_run(db_path)
+    if scan_run is None:
+        raise ValueError(f"no scan run found in {db_path}")
+    wiki_root = Path(str(scan_run["root"]))
+    report = source_shelf_report(db_path, "computer", limit=1000)
+    weak_summary_paths = {str(note["path"]) for note in report["weak_summaries"]}
+    targets: list[dict[str, Any]] = []
+
+    cpp_target = stroustrup_placeholder_repair_target(wiki_root)
+    if cpp_target is not None:
+        targets.append(cpp_target)
+    for path, summary in sorted(COMPUTER_SOURCE_SUMMARIES.items()):
+        if path not in weak_summary_paths:
+            continue
+        target = source_summary_insert_target(wiki_root, path, summary)
+        if target is not None:
+            targets.append(target)
+    placeholder_target = delete_markdown_file_target(
+        wiki_root,
+        "sources/computer/page--1-0.md",
+        reason="Remove generated C++ placeholder after replacing chapter links with plain chapter names",
+    )
+    if placeholder_target is not None:
+        targets.append(placeholder_target)
+    if not targets:
+        raise ValueError("no computer source shelf cleanup targets found")
+
+    return {
+        "backup_manifest": {
+            "required_before_apply": True,
+            "status": "not_created",
+        },
+        "bundle_id": f"bundle:source-shelves:computer-cleanup:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
+        "created_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "rationale": "Clean local computer source shelf summaries and remove the generated C++ placeholder page.",
+        "source_catalog": {
+            "db_path": str(db_path),
+            "root": str(scan_run["root"]),
+            "run_id": scan_run.get("run_id"),
+            "scanned_at_utc": scan_run.get("scanned_at_utc"),
+        },
+        "targets": targets,
+    }
+
+
+def source_summary_insert_target(
+    wiki_root: Path,
+    path: str,
+    summary: str,
+) -> dict[str, Any] | None:
+    source = wiki_root / path
+    if not source.exists():
+        raise ValueError(f"source note does not exist: {path}")
+    text = source.read_bytes().decode("utf-8", errors="surrogateescape")
+    if has_source_summary(text):
+        return None
+    newline = "\r\n" if "\r\n" in text else "\n"
+    marker = f"{newline}## What Problem This Project Is Trying To Solve{newline}"
+    if text.count(marker) != 1:
+        raise ValueError(f"cannot find insertion point in {path}")
+    return {
+        "cleanup_kind": "source_summary",
+        "new_text": (
+            f"{newline}## Why This Source Matters{newline}{newline}"
+            f"{summary}{newline}{newline}"
+            f"## What Problem This Project Is Trying To Solve{newline}"
+        ),
+        "old_text": marker,
+        "path": path,
+        "reason": "Add clear opening source-summary section for the computer shelf",
+        "source_path": path,
+        "type": "replace_text_block",
+    }
+
+
+def stroustrup_placeholder_repair_target(wiki_root: Path) -> dict[str, Any] | None:
+    path = "sources/computer/computer__the_c_programming_language__bjarne_stroustrup.md"
+    source = wiki_root / path
+    if not source.exists():
+        return None
+    text = source.read_bytes().decode("utf-8", errors="surrogateescape")
+    newline = "\r\n" if "\r\n" in text else "\n"
+    old_text = newline.join(
+        [
+            "- Chapter 1: chapter 1 ptg10564057 1 Notes to the Reader Hurry Slowly; [Notes to the Reader](page--1-0)",
+            "- Chapter 2: The Basics; [A Tour of C++: The Basics](page--1-0)",
+            "- Chapter 3: Abstraction Mechanisms; [A Tour of C++: Abstraction Mechanisms](page--1-0)",
+        ]
+    )
+    if old_text not in text:
+        return None
+    return {
+        "cleanup_kind": "placeholder_link_repair",
+        "new_text": newline.join(
+            [
+                "- Chapter 1: Notes to the Reader",
+                "- Chapter 2: A Tour of C++: The Basics",
+                "- Chapter 3: A Tour of C++: Abstraction Mechanisms",
+            ]
+        ),
+        "old_text": old_text,
+        "path": path,
+        "reason": "Replace generated page links with plain chapter names before deleting the placeholder page",
+        "source_path": path,
+        "type": "replace_text_block",
+    }
+
+
+def delete_markdown_file_target(
+    wiki_root: Path,
+    path: str,
+    *,
+    reason: str,
+) -> dict[str, Any] | None:
+    source = wiki_root / path
+    if not source.exists():
+        return None
+    return {
+        "cleanup_kind": "delete_generated_placeholder",
+        "expected_sha256": sha256(source.read_bytes()).hexdigest(),
+        "path": path,
+        "reason": reason,
+        "type": "delete_markdown_file",
     }
 
 

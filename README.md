@@ -69,6 +69,7 @@ python3 -m wiki_tool source-shelves summary --json
 python3 -m wiki_tool source-shelves show math --json
 python3 -m wiki_tool source-shelves show computer --json
 python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --json
+python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality thin --json
 python3 -m wiki_tool page-quality missing-summaries --json
@@ -155,6 +156,9 @@ Source shelf reports:
 - Markdown report writes are local-only under ignored
   `state/source_shelf_reports/`; they do not edit NAS Markdown, move books, or
   create patch bundles.
+- `source-shelves cleanup-bundle computer` writes a reviewable local patch
+  bundle for computer-shelf cleanup. Apply it to `state/wiki_mirror` first;
+  NAS promotion is a separate reviewed bundle pass.
 
 Page quality reports:
 
@@ -206,6 +210,8 @@ Design rules:
 - Page quality reports are deterministic local queues for editorial review.
 - Patch bundle target schema and rollback safety rules are documented in
   [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md).
+- Patch bundles can replace exact Markdown blocks and delete reviewed Markdown
+  files when guarded by validation, backups, manifests, and rollback.
 - Patch-bundle restore operations are documented in
   [BACKUP_RESTORE.md](BACKUP_RESTORE.md).
 - Real patch-bundle applies require the bundle/catalog scan root to match

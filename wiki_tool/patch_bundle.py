@@ -12,6 +12,18 @@ from wiki_tool.catalog import latest_scan_run
 
 
 REQUIRED_KEYS = {"bundle_id", "created_at_utc", "targets", "rationale", "backup_manifest"}
+SUPPORTED_TARGET_TYPES = {
+    "create_markdown_stub",
+    "delete_markdown_file",
+    "replace_link_target",
+    "replace_markdown_link",
+    "replace_text_block",
+}
+REPLACEMENT_TARGET_TYPES = {
+    "replace_link_target",
+    "replace_markdown_link",
+    "replace_text_block",
+}
 
 
 def validate_patch_bundle(path: Path, *, wiki_root: Path | None = None) -> dict[str, Any]:
@@ -39,6 +51,12 @@ def validate_patch_bundle(path: Path, *, wiki_root: Path | None = None) -> dict[
             validate_replace_markdown_link(index, target, errors, wiki_root=wiki_root)
         elif target.get("type") == "create_markdown_stub":
             validate_create_markdown_stub(index, target, errors, wiki_root=wiki_root)
+        elif target.get("type") == "replace_text_block":
+            validate_replace_text_block(index, target, errors, wiki_root=wiki_root)
+        elif target.get("type") == "delete_markdown_file":
+            validate_delete_markdown_file(index, target, errors, wiki_root=wiki_root)
+        else:
+            errors.append(f"target {index} unsupported type: {target.get('type', '<missing>')}")
     return {
         "path": str(path),
         "valid": not errors,
@@ -66,15 +84,19 @@ def apply_patch_bundle(
         require_match=not dry_run,
     )
 
-    targets = payload["targets"]
-    supported = {"replace_link_target", "replace_markdown_link", "create_markdown_stub"}
-    unsupported = sorted({target.get("type", "<missing>") for target in targets if target.get("type") not in supported})
+    targets = [
+        {**target, "_bundle_index": index}
+        for index, target in enumerate(payload["targets"])
+    ]
+    unsupported = sorted(
+        {target.get("type", "<missing>") for target in targets if target.get("type") not in SUPPORTED_TARGET_TYPES}
+    )
     if unsupported:
         raise ValueError(f"unsupported patch target types: {', '.join(unsupported)}")
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for target in targets:
-        if target.get("type") in {"replace_link_target", "replace_markdown_link"}:
+        if target.get("type") in REPLACEMENT_TARGET_TYPES:
             grouped[str(target["source_path"])].append(target)
 
     bundle_id = str(payload["bundle_id"])
@@ -87,11 +109,22 @@ def apply_patch_bundle(
         source = wiki_root / rel_path
         original_bytes = source.read_bytes()
         original_text = original_bytes.decode("utf-8", errors="surrogateescape")
-        lines = original_text.splitlines(keepends=True)
+        text = original_text
         replacements = 0
-        for target in sorted(grouped[rel_path], key=lambda item: item["line"]):
-            line_index = int(target["line"]) - 1
-            if target.get("type") == "replace_markdown_link":
+        for target in sorted(grouped[rel_path], key=replacement_target_sort_key):
+            target_type = target.get("type")
+            if target_type == "replace_text_block":
+                old_text = str(target["old_text"])
+                new_text = str(target["new_text"])
+                occurrences = text.count(old_text)
+                if occurrences != 1:
+                    raise ValueError(
+                        f"stale target at {rel_path}: expected one old_text occurrence, found {occurrences}"
+                    )
+                text = text.replace(old_text, new_text, 1)
+            elif target_type == "replace_markdown_link":
+                lines = text.splitlines(keepends=True)
+                line_index = int(target["line"]) - 1
                 old_label = str(target["old_label"])
                 old_target = str(target["old_target"])
                 new_label = str(target["new_label"])
@@ -107,16 +140,19 @@ def apply_patch_bundle(
                     new_label=new_label,
                     new_target=new_target,
                 )
+                text = "".join(lines)
             else:
+                lines = text.splitlines(keepends=True)
+                line_index = int(target["line"]) - 1
                 old_target = str(target["old_target"])
                 new_target = str(target["new_target"])
                 if not line_has_link_target(lines[line_index], old_target):
                     raise ValueError(f"stale target at {rel_path}:{target['line']}: {old_target}")
                 lines[line_index] = replace_link_target(lines[line_index], old_target, new_target)
+                text = "".join(lines)
             replacements += 1
 
-        new_text = "".join(lines)
-        new_bytes = new_text.encode("utf-8", errors="surrogateescape")
+        new_bytes = text.encode("utf-8", errors="surrogateescape")
         file_summary = {
             "backup_path": str((backup_root / rel_path).as_posix()),
             "new_sha256": sha256(new_bytes).hexdigest(),
@@ -160,6 +196,36 @@ def apply_patch_bundle(
             continue
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_bytes(new_bytes)
+        manifests.append(file_summary)
+
+    for target in sorted(
+        (item for item in targets if item.get("type") == "delete_markdown_file"),
+        key=lambda item: item["path"],
+    ):
+        rel_path = str(target["path"])
+        source = wiki_root / rel_path
+        if not source.exists():
+            raise ValueError(f"refusing to delete missing file: {rel_path}")
+        original_bytes = source.read_bytes()
+        original_sha256 = sha256(original_bytes).hexdigest()
+        if original_sha256 != str(target["expected_sha256"]):
+            raise ValueError(f"refusing to delete changed file: {rel_path}")
+        file_summary = {
+            "action": "delete",
+            "backup_path": str((backup_root / rel_path).as_posix()),
+            "new_sha256": None,
+            "old_sha256": original_sha256,
+            "path": rel_path,
+            "replacement_count": 0,
+            "would_change": True,
+        }
+        file_summaries.append(file_summary)
+        if dry_run:
+            continue
+        backup_path = backup_root / rel_path
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_path.write_bytes(original_bytes)
+        source.unlink()
         manifests.append(file_summary)
 
     manifest_path = backup_root / "manifest.json"
@@ -234,6 +300,11 @@ def rollback_patch_bundle(
         action = item["action"]
         status = item["status"]
         rel_path = str(item["path"])
+        if status == "already_restored":
+            result["actions"].append(
+                {"action": "restore", "changed": False, "path": rel_path, "status": status}
+            )
+            continue
         if status == "already_missing":
             result["actions"].append(
                 {"action": "delete", "changed": False, "path": rel_path, "status": status}
@@ -360,15 +431,17 @@ def manifest_file_status(
 
     if rel_path is None:
         status = "blocked_missing_path"
-    elif action not in {"replace", "create"}:
+    elif action not in {"replace", "create", "delete"}:
         status = "blocked_unsupported_action"
-    elif action == "replace" and backup_path is None:
+    elif action in {"replace", "delete"} and backup_path is None:
         status = "blocked_missing_backup"
-    elif action == "replace" and not backup_exists:
+    elif action in {"replace", "delete"} and not backup_exists:
         status = "blocked_missing_backup"
-    elif action == "replace" and entry.get("old_sha256") and backup_sha256 != entry.get("old_sha256"):
+    elif action in {"replace", "delete"} and entry.get("old_sha256") and backup_sha256 != entry.get("old_sha256"):
         status = "blocked_backup_hash_mismatch"
-    elif expected_current_sha256 is None:
+    elif action in {"replace", "create"} and expected_current_sha256 is None:
+        status = "blocked_missing_expected_hash"
+    elif action == "delete" and not entry.get("old_sha256"):
         status = "blocked_missing_expected_hash"
     elif wiki_root is not None:
         try:
@@ -381,6 +454,15 @@ def manifest_file_status(
                 status = "already_missing"
             elif action == "replace" and not current_exists:
                 status = "blocked_current_missing"
+            elif action == "delete":
+                if not current_exists:
+                    status = "ready"
+                else:
+                    current_sha256 = sha256_file(target)
+                    if current_sha256 == entry.get("old_sha256"):
+                        status = "already_restored"
+                    else:
+                        status = "blocked_current_exists"
             else:
                 current_sha256 = sha256_file(target)
                 if current_sha256 != expected_current_sha256:
@@ -511,6 +593,12 @@ def sha256_file(path: Path) -> str:
 
 def safe_path_component(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_") or "bundle"
+
+
+def replacement_target_sort_key(target: dict[str, Any]) -> tuple[int, int, int]:
+    if target.get("type") == "replace_text_block":
+        return (1, int(target.get("_bundle_index", 0)), 0)
+    return (0, int(target.get("line", 0)), int(target.get("_bundle_index", 0)))
 
 
 def line_has_link_target(line: str, target: str) -> bool:
@@ -649,6 +737,74 @@ def validate_create_markdown_stub(
         errors.append(f"target {index} inbound_references must be a non-empty list")
     if wiki_root is not None and (wiki_root / path).exists():
         errors.append(f"target {index} path already exists: {path}")
+
+
+def validate_replace_text_block(
+    index: int,
+    target: dict[str, Any],
+    errors: list[str],
+    *,
+    wiki_root: Path | None,
+) -> None:
+    required = {"new_text", "old_text", "source_path"}
+    missing = sorted(key for key in required if not target.get(key))
+    if missing:
+        errors.append(f"target {index} missing replace_text_block keys: {', '.join(missing)}")
+        return
+    source_path = str(target["source_path"])
+    if source_path.startswith("/") or ".." in Path(source_path).parts:
+        errors.append(f"target {index} source_path must be wiki-relative")
+        return
+    if wiki_root is None:
+        return
+    try:
+        source = safe_wiki_target(wiki_root, source_path)
+    except ValueError as exc:
+        errors.append(f"target {index} {exc}")
+        return
+    if not source.exists():
+        errors.append(f"target {index} source_path does not exist: {source_path}")
+        return
+    old_text = str(target["old_text"])
+    text = source.read_bytes().decode("utf-8", errors="surrogateescape")
+    occurrences = text.count(old_text)
+    if occurrences != 1:
+        errors.append(
+            f"target {index} old_text must occur exactly once in {source_path}; found {occurrences}"
+        )
+
+
+def validate_delete_markdown_file(
+    index: int,
+    target: dict[str, Any],
+    errors: list[str],
+    *,
+    wiki_root: Path | None,
+) -> None:
+    required = {"expected_sha256", "path"}
+    missing = sorted(key for key in required if not target.get(key))
+    if missing:
+        errors.append(f"target {index} missing delete_markdown_file keys: {', '.join(missing)}")
+        return
+    path = str(target["path"])
+    if not path.endswith(".md"):
+        errors.append(f"target {index} path must end with .md")
+    if path.startswith("/") or ".." in Path(path).parts:
+        errors.append(f"target {index} path must be wiki-relative")
+        return
+    if wiki_root is None:
+        return
+    try:
+        source = safe_wiki_target(wiki_root, path)
+    except ValueError as exc:
+        errors.append(f"target {index} {exc}")
+        return
+    if not source.exists():
+        errors.append(f"target {index} path does not exist: {path}")
+        return
+    actual_sha256 = sha256_file(source)
+    if actual_sha256 != str(target["expected_sha256"]):
+        errors.append(f"target {index} expected_sha256 does not match: {path}")
 
 
 def target_exists_after_replacement(*, wiki_root: Path, source_path: str, new_target: str) -> bool:

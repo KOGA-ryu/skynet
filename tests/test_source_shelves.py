@@ -5,6 +5,7 @@ import unittest
 from wiki_tool.catalog import scan_wiki
 from wiki_tool.cli import build_parser
 from wiki_tool.source_shelves import (
+    build_source_shelf_cleanup_bundle,
     source_shelf_report,
     source_shelf_summary,
     write_source_shelf_reports,
@@ -94,17 +95,32 @@ class SourceShelfTests(unittest.TestCase):
             self.assertTrue((output_dir / "computer.md").exists())
             self.assertIn("Source Shelf Report: math", (output_dir / "math.md").read_text())
 
+    def test_source_shelf_cleanup_bundle_targets_current_computer_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = build_source_shelf_catalog(tmp)
+
+            bundle = build_source_shelf_cleanup_bundle(db, shelf="computer")
+
+            self.assertEqual(bundle["source_catalog"]["root"], str((Path(tmp) / "wiki").resolve()))
+            self.assertEqual(len(bundle["targets"]), 1)
+            target = bundle["targets"][0]
+            self.assertEqual(target["type"], "replace_text_block")
+            self.assertEqual(target["source_path"], "sources/computer/libqalculate_patterns.md")
+            self.assertIn("Why This Source Matters", target["new_text"])
+
     def test_cli_exposes_source_shelf_commands(self) -> None:
         parser = build_parser()
 
         summary_args = parser.parse_args(["source-shelves", "summary"])
         show_args = parser.parse_args(["source-shelves", "show", "math", "--limit", "3"])
         write_args = parser.parse_args(["source-shelves", "write", "--limit", "4"])
+        cleanup_args = parser.parse_args(["source-shelves", "cleanup-bundle", "computer"])
 
         self.assertEqual(summary_args.func.__name__, "cmd_source_shelves_summary")
         self.assertEqual(show_args.shelf, "math")
         self.assertEqual(show_args.limit, 3)
         self.assertEqual(write_args.limit, 4)
+        self.assertEqual(cleanup_args.func.__name__, "cmd_source_shelves_cleanup_bundle")
 
 
 def build_source_shelf_catalog(tmp: str) -> Path:
@@ -164,7 +180,8 @@ def build_source_shelf_catalog(tmp: str) -> Path:
         "- corpus: `computer`\n"
         "- document_id: `n/a`\n"
         "- output_root: `n/a`\n\n"
-        "This pattern note connects calculator engine implementation choices to computational math project design.\n\n"
+        "## What Problem This Project Is Trying To Solve\n\n"
+        "libqalculate keeps parser and evaluator boundaries visible for computational math project design.\n\n"
         "## Related Projects\n\n"
         "- [RAG System](../../projects/rag_system/README.md)\n"
     )

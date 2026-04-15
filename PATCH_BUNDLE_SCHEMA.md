@@ -4,14 +4,15 @@ Patch bundles are reviewable local plans for editing the NAS wiki. They are
 generated under `patch_bundles/`, validated before use, applied to a selected
 wiki root, and recorded with rollback manifests under `backups/`.
 
-The implemented bundle system supports only three target types:
+The implemented bundle system supports these target types:
 
 - `replace_link_target`
 - `replace_markdown_link`
 - `create_markdown_stub`
+- `replace_text_block`
+- `delete_markdown_file`
 
-It does not support arbitrary text edits, deletes, moves, renames, or bulk
-frontmatter changes.
+It does not support arbitrary moves, renames, or bulk frontmatter changes.
 
 ## Bundle Envelope
 
@@ -188,6 +189,70 @@ Safety behavior:
 - Validation fails if the target file already exists when `--wiki-root` is supplied.
 - Apply refuses to overwrite an existing file.
 
+## `replace_text_block`
+
+Use this when a reviewed Markdown content block needs an exact replacement,
+such as adding a source-summary section or replacing a generated chapter-link
+block with plain chapter text.
+
+Required fields:
+
+| field | type | validation |
+|---|---|---|
+| `old_text` | string | Must occur exactly once in `source_path`. |
+| `new_text` | string | Replacement text. |
+| `source_path` | string | Wiki-relative Markdown file to edit. |
+
+Example:
+
+```json
+{
+  "new_text": "\n## Why This Source Matters\n\nUse this source when...\n\n## What Problem This Project Is Trying To Solve\n",
+  "old_text": "\n## What Problem This Project Is Trying To Solve\n",
+  "path": "sources/computer/example_patterns.md",
+  "reason": "Add clear opening source-summary section",
+  "source_path": "sources/computer/example_patterns.md",
+  "type": "replace_text_block"
+}
+```
+
+Safety behavior:
+
+- Validation checks that `source_path` exists when `--wiki-root` is supplied.
+- Validation checks that `old_text` occurs exactly once.
+- Apply fails closed if the old block is missing or duplicated.
+- Rollback restores the whole original file from backup.
+
+## `delete_markdown_file`
+
+Use this only for reviewed Markdown-file deletion, usually after generated
+placeholder references have been removed.
+
+Required fields:
+
+| field | type | validation |
+|---|---|---|
+| `expected_sha256` | string | SHA-256 of the file that is safe to delete. |
+| `path` | string | Wiki-relative `.md` path to delete. |
+
+Example:
+
+```json
+{
+  "expected_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "path": "sources/computer/page--1-0.md",
+  "reason": "Remove generated placeholder after repairing inbound links",
+  "type": "delete_markdown_file"
+}
+```
+
+Safety behavior:
+
+- `path` must be wiki-relative and end with `.md`.
+- Validation fails if the file is missing or its hash differs.
+- Apply backs up the original file before deletion.
+- Rollback restores the deleted file from backup if it is still missing.
+
 ## Write Root Preflight
 
 Patch bundles are relative-path write plans, so the tool verifies the root they
@@ -237,6 +302,16 @@ Created stub records include:
 - `backup_path: null`
 - `old_sha256: null`
 - `new_sha256`
+- `replacement_count: 0`
+- `would_change: true`
+
+Deleted Markdown file records include:
+
+- `action: "delete"`
+- `path`
+- `backup_path`
+- `old_sha256`
+- `new_sha256: null`
 - `replacement_count: 0`
 - `would_change: true`
 

@@ -10,6 +10,7 @@ from wiki_tool.patch_bundle import (
     apply_patch_bundle,
     report_patch_bundle,
     rollback_patch_bundle,
+    validate_patch_bundle,
 )
 from wiki_tool.catalog import scan_wiki
 
@@ -122,6 +123,88 @@ class PatchBundleReportRollbackTests(unittest.TestCase):
                 dry_run=True,
             )
             self.assertEqual(dry_run["actions"][0]["status"], "already_missing")
+
+    def test_replace_text_block_apply_and_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wiki"
+            root.mkdir()
+            note = root / "index.md"
+            original = "# Home\n\nOld exact block.\n"
+            note.write_text(original)
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(text_block_bundle("Old exact block.", "New exact block.")))
+
+            applied = apply_patch_bundle(
+                bundle_path,
+                wiki_root=root,
+                backup_dir=Path(tmp) / "backups",
+            )
+
+            self.assertIn("New exact block.", note.read_text())
+            self.assertEqual(applied["files"][0]["replacement_count"], 1)
+            result = rollback_patch_bundle(Path(applied["manifest_path"]), wiki_root=root)
+            self.assertTrue(result["rolled_back"])
+            self.assertEqual(note.read_text(), original)
+
+    def test_replace_text_block_requires_single_occurrence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wiki"
+            root.mkdir()
+            (root / "index.md").write_text("# Home\n\nOld\n\nOld\n")
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(text_block_bundle("Old", "New")))
+
+            validation = validate_patch_bundle(bundle_path, wiki_root=root)
+
+            self.assertFalse(validation["valid"])
+            self.assertIn("old_text must occur exactly once", validation["errors"][0])
+
+    def test_delete_markdown_file_apply_and_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wiki"
+            root.mkdir()
+            note = root / "docs" / "delete_me.md"
+            note.parent.mkdir()
+            original = "# Delete Me\n\nGenerated placeholder.\n"
+            note.write_text(original)
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(delete_bundle(digest(original))))
+
+            applied = apply_patch_bundle(
+                bundle_path,
+                wiki_root=root,
+                backup_dir=Path(tmp) / "backups",
+            )
+
+            self.assertFalse(note.exists())
+            report = report_patch_bundle(Path(applied["manifest_path"]), wiki_root=root)
+            self.assertEqual(report["files"][0]["action"], "delete")
+            self.assertEqual(report["files"][0]["status"], "ready")
+            result = rollback_patch_bundle(Path(applied["manifest_path"]), wiki_root=root)
+            self.assertTrue(result["rolled_back"])
+            self.assertEqual(note.read_text(), original)
+
+            dry_run = rollback_patch_bundle(
+                Path(applied["manifest_path"]),
+                wiki_root=root,
+                dry_run=True,
+            )
+            self.assertEqual(dry_run["actions"][0]["status"], "already_restored")
+
+    def test_delete_markdown_file_refuses_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wiki"
+            root.mkdir()
+            note = root / "docs" / "delete_me.md"
+            note.parent.mkdir()
+            note.write_text("# Delete Me\n\nChanged.\n")
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(delete_bundle("0" * 64)))
+
+            validation = validate_patch_bundle(bundle_path, wiki_root=root)
+
+            self.assertFalse(validation["valid"])
+            self.assertIn("expected_sha256 does not match", validation["errors"][0])
 
     def test_rollback_refuses_current_file_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -359,6 +442,42 @@ def create_bundle() -> dict[str, object]:
                 "reason": "missing note",
                 "title": "Missing",
                 "type": "create_markdown_stub",
+            }
+        ],
+    }
+
+
+def text_block_bundle(old_text: str, new_text: str) -> dict[str, object]:
+    return {
+        "backup_manifest": True,
+        "bundle_id": "bundle:text-block",
+        "created_at_utc": "2026-04-15T00:00:00Z",
+        "rationale": "text block test",
+        "targets": [
+            {
+                "new_text": new_text,
+                "old_text": old_text,
+                "path": "index.md",
+                "reason": "replace exact text block",
+                "source_path": "index.md",
+                "type": "replace_text_block",
+            }
+        ],
+    }
+
+
+def delete_bundle(expected_sha256: str) -> dict[str, object]:
+    return {
+        "backup_manifest": True,
+        "bundle_id": "bundle:delete",
+        "created_at_utc": "2026-04-15T00:00:00Z",
+        "rationale": "delete test",
+        "targets": [
+            {
+                "expected_sha256": expected_sha256,
+                "path": "docs/delete_me.md",
+                "reason": "delete generated placeholder",
+                "type": "delete_markdown_file",
             }
         ],
     }

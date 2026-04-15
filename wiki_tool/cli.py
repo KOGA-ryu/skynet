@@ -84,8 +84,10 @@ from wiki_tool.scheduled_audit import (
     run_scheduled_audit,
 )
 from wiki_tool.source_shelves import (
+    DEFAULT_SOURCE_SHELF_CLEANUP_BUNDLE,
     DEFAULT_SOURCE_SHELF_LIMIT,
     DEFAULT_SOURCE_SHELF_REPORT_DIR,
+    build_source_shelf_cleanup_bundle,
     source_shelf_report,
     source_shelf_summary,
     write_source_shelf_reports,
@@ -184,6 +186,11 @@ def build_parser() -> argparse.ArgumentParser:
     source_shelves_write.add_argument("--output-dir", type=Path, default=DEFAULT_SOURCE_SHELF_REPORT_DIR)
     source_shelves_write.add_argument("--limit", type=int, default=DEFAULT_SOURCE_SHELF_LIMIT)
     source_shelves_write.set_defaults(func=cmd_source_shelves_write)
+    source_shelves_cleanup = source_shelves_sub.add_parser("cleanup-bundle", help="write a local source shelf cleanup bundle")
+    add_json_flag(source_shelves_cleanup)
+    source_shelves_cleanup.add_argument("shelf", choices=["computer"])
+    source_shelves_cleanup.add_argument("--output", type=Path, default=DEFAULT_SOURCE_SHELF_CLEANUP_BUNDLE)
+    source_shelves_cleanup.set_defaults(func=cmd_source_shelves_cleanup_bundle)
 
     page_quality = sub.add_parser("page-quality", help="page quality reports for librarian review")
     add_json_flag(page_quality)
@@ -504,6 +511,20 @@ def cmd_source_shelves_show(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_source_shelves_write(args: argparse.Namespace) -> dict[str, Any]:
     return write_source_shelf_reports(args.db, output_dir=args.output_dir, limit=args.limit)
+
+
+def cmd_source_shelves_cleanup_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    bundle = build_source_shelf_cleanup_bundle(args.db, shelf=args.shelf)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")
+    validation = validate_patch_bundle(args.output)
+    return {
+        "bundle_id": bundle["bundle_id"],
+        "output": str(args.output),
+        "target_count": len(bundle["targets"]),
+        "valid": validation["valid"],
+        "validation_errors": validation["errors"],
+    }
 
 
 def cmd_page_quality_summary(args: argparse.Namespace) -> dict[str, Any]:
