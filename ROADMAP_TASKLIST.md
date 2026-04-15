@@ -20,7 +20,10 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `6a592ab` (`Initial wiki usability tooling
   checkpoint`).
-- [ ] Current active task: configure and test Windows dev root.
+- [ ] Current active task: add alias maps for renamed notes and project
+  shorthand.
+- [ ] Deferred environment task: Windows PC access is tapped off until the
+  machine direction is settled, likely after a Linux conversion.
 
 ## Operating Rules
 
@@ -91,8 +94,9 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Apply non-Markdown file-link bundle to the NAS.
 - [x] Classify template placeholder links separately.
 - [x] Exclude template placeholders from actionable broken-link counts.
-- [ ] Configure Windows dev root in `state/devrefs_config.json`.
-- [ ] Test `dev://` opening behavior on the Windows PC.
+- [ ] Configure Windows or Linux PC dev root after the desktop environment is
+  finalized.
+- [ ] Test `dev://` opening behavior on the future PC environment.
 - [ ] Add alias maps for renamed notes and project shorthand.
 - [ ] Add per-project backlink reports.
 - [ ] Add orphan-note reports.
@@ -175,9 +179,11 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Support Mac dev root default: `/Users/kogaryu/dev`.
 - [x] Keep Windows dev root intentionally unconfigured by default.
 - [x] Document local Windows dev-root config.
-- [ ] Configure the Windows PC dev root.
-- [ ] Verify `wiki_tool open <wiki-path> --platform windows`.
-- [ ] Verify `wiki_tool open dev://<repo>/<path> --platform windows`.
+- [ ] Defer Windows PC setup until the planned hardware/Linux decision is
+  complete.
+- [ ] Configure the future PC dev root after the operating system is final.
+- [ ] Verify `wiki_tool open <wiki-path>` on the future PC environment.
+- [ ] Verify `wiki_tool open dev://<repo>/<path>` on the future PC environment.
 - [ ] Document editor workflow for MacBook.
 - [ ] Document editor workflow for Windows PC.
 - [ ] Decide whether `dev://` needs a clickable local handler or CLI-only
@@ -212,17 +218,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Configure and test Windows dev root in `state/devrefs_config.json`.
-2. [ ] Add alias maps for renamed notes and project shorthand.
-3. [ ] Add per-project backlink, orphan, and missing-hub reports.
-4. [ ] Add patch-bundle rollback and bundle report commands.
-5. [ ] Add a single health command for scan, audit, harness validation, and
+1. [ ] Add alias maps for renamed notes and project shorthand.
+2. [ ] Add per-project backlink, orphan, and missing-hub reports.
+3. [ ] Add patch-bundle rollback and bundle report commands.
+4. [ ] Add a single health command for scan, audit, harness validation, and
    unit tests.
-6. [ ] Add structured-output LLM adapter behind the harness synthesis step.
-7. [ ] Add failure-taxonomy retry and fallback behavior.
-8. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
-9. [ ] Build eval runner and recurring retrieval quality report.
-10. [ ] Add the first bounded knowledge API surface.
+5. [ ] Add structured-output LLM adapter behind the harness synthesis step.
+6. [ ] Add failure-taxonomy retry and fallback behavior.
+7. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
+8. [ ] Build eval runner and recurring retrieval quality report.
+9. [ ] Add the first bounded knowledge API surface.
+10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
 
