@@ -18,7 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T091149Z:897e722f4b59f5ea`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `c581bb9` (`Add wiki eval runner`).
+- [x] Latest source checkpoint: `bc108cf` (`Add bounded JSON-RPC knowledge API`).
 - [ ] Current active task: add install/setup instructions.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
