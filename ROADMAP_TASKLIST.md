@@ -18,9 +18,9 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `e8b4673` (`Add wiki console entry point`).
-- [ ] Current active task: decide whether roadmap/tasklist docs should also be
-  mirrored into the NAS wiki.
+- [x] Latest source checkpoint: `7b8deb1` (`Add source shelf reports`).
+- [ ] Current active task: use source shelf reports to prioritize
+  math/computer book cleanup.
 - [x] Generated stub report status: complete; `page-quality stubs` found 80
   generated stubs with 250 inbound references, and `page-quality write` now
   writes `generated_stubs.md`.
@@ -63,6 +63,10 @@ as tasks move from planned work into implemented, verified tooling.
   emitted cleanup targets from 34 candidates.
 - [x] Package entry point status: complete; editable installs now expose the
   `wiki` console command while `python3 -m wiki_tool ...` remains supported.
+- [x] Source shelf report status: complete; local catalog reports 44 math and
+  computer source notes across 2 shelves, with math at 23 maintained notes and
+  computer at 21 notes, 9 weak summaries, 1 thin note, 1 placeholder artifact,
+  1 missing inbound route, and 1 missing concept/project bridge.
 - [ ] Deferred environment task: Windows PC access is tapped off until the
   machine direction is settled, likely after a Linux conversion.
 
@@ -239,6 +243,11 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Add page quality reports for thin notes, missing summaries, and unclear
   hub pages.
 - [x] Add project-level librarian reports.
+- [x] Add local source shelf reports for math and computer science books.
+- [ ] Use source shelf reports to prioritize math/computer book cleanup.
+- [ ] Use source shelf reports to fill computer science source-note summaries.
+- [ ] Add book-to-concept bridge maps for math.
+- [ ] Add book-to-project bridge maps for computer science.
 - [ ] Add an intake process for new notes.
 - [ ] Add a promote process for rough notes becoming canonical pages.
 - [ ] Add a template-placeholder policy so templates stay useful without
@@ -260,8 +269,7 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
-   wiki.
+1. [ ] Use source shelf reports to prioritize math/computer book cleanup.
 2. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
     into useful pages.
 3. [ ] Add an intake process for new notes.
@@ -270,10 +278,8 @@ as tasks move from planned work into implemented, verified tooling.
    polluting audits.
 6. [ ] Document editor workflow for MacBook.
 7. [ ] Add recurring audit review cadence.
-8. [ ] Decide whether `dev://` needs a clickable local handler or CLI-only
-   resolution is enough.
-9. [ ] Define when scheduled audits should use `--require-eval` as a blocking
-   gate.
+8. [ ] Add book-to-concept bridge maps for math.
+9. [ ] Add book-to-project bridge maps for computer science.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -355,6 +361,10 @@ python3 -m wiki_tool aliases list --json
 python3 -m wiki_tool project-reports summary --json
 python3 -m wiki_tool project-reports show stock_trading --limit 25 --json
 python3 -m wiki_tool project-reports write --output-dir state/project_reports --limit 25 --json
+python3 -m wiki_tool source-shelves summary --json
+python3 -m wiki_tool source-shelves show math --limit 25 --json
+python3 -m wiki_tool source-shelves show computer --limit 25 --json
+python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --limit 25 --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
