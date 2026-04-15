@@ -18,8 +18,11 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `c20fd4f` (`Add harness JSON-RPC methods`).
-- [ ] Current active task: add release notes for the first usable build.
+- [x] Latest source checkpoint: `a18e5b9` (`Add first usable build release notes`).
+- [ ] Current active task: build a report of generated stubs that still need
+  human content.
+- [x] First usable build release notes status: complete; see
+  `RELEASE_NOTES.md`.
 - [x] JSON-RPC harness API status: complete; `harness.run` and `harness.show`
   return bounded answer and trace summaries.
 - [x] Backup restore docs status: complete; operator restore workflow and
@@ -232,22 +235,23 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Add a single smoke-test command.
 - [x] Add backup restore docs.
 - [ ] Add package entry point if CLI use becomes frequent.
-- [ ] Add release notes for the first usable build.
+- [x] Add release notes for the first usable build.
 
 ## Next 10 Tasks
 
-1. [ ] Add release notes for the first usable build.
-2. [ ] Build a report of generated stubs that still need human content.
-3. [ ] Add project-level librarian reports.
-4. [ ] Add stale-scan detection when the NAS has changed after the last catalog
+1. [ ] Build a report of generated stubs that still need human content.
+2. [ ] Add project-level librarian reports.
+3. [ ] Add stale-scan detection when the NAS has changed after the last catalog
    build.
-5. [ ] Compare retrieval profiles before changing search behavior.
-6. [ ] Use eval results to choose cleanup targets instead of relying on memory.
-7. [ ] Add optional scheduled scan/audit runner.
-8. [ ] Add package entry point if CLI use becomes frequent.
-9. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
+4. [ ] Compare retrieval profiles before changing search behavior.
+5. [ ] Use eval results to choose cleanup targets instead of relying on memory.
+6. [ ] Add optional scheduled scan/audit runner.
+7. [ ] Add package entry point if CLI use becomes frequent.
+8. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
    wiki.
-10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
+9. [ ] Revisit PC access after the Windows-to-Linux decision is final.
+10. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
+    into useful pages.
 
 ## Core Commands
 
