@@ -42,6 +42,8 @@ APIs.
   Markdown pages that still need human-written content.
 - Stub-fill queues rank generated stubs and write local evidence packets for
   human promotion work without replacing stub content.
+- Repo-demand intake validates reviewed manifests, writes local queue artifacts,
+  and can prepare reviewable patch bundles without applying them.
 - Patch bundles provide the guarded path for NAS edits with validation, dry-run
   summaries, backups, manifests, reports, and rollback.
 - Portable `dev://<repo>/<path>` references work for the Mac dev root and are
@@ -127,6 +129,9 @@ python3 -m wiki_tool source-shelves bridge-bundle computer --output patch_bundle
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality stub-fill-queue --limit 25 --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
+python3 -m wiki_tool intake validate --input tests/fixtures/intake/demo_manifest.json --repo-root tests/fixtures/intake/repo --json
+python3 -m wiki_tool intake write --input tests/fixtures/intake/demo_manifest.json --repo-root tests/fixtures/intake/repo --output-dir state/intake --json
+python3 -m wiki_tool intake bundle --input tests/fixtures/intake/demo_manifest.json --repo-root tests/fixtures/intake/repo --wiki-root state/wiki_mirror --output patch_bundles/intake_demo_repo_demand.json --json
 ```
 
 Use the local JSON-RPC API:
@@ -146,6 +151,8 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method
   systemd timer is still deferred until the review cadence is chosen.
 - Generated stub pages now have a local promotion queue and evidence packets;
   replacing stub content remains a separate reviewed patch-bundle pass.
+- Repo-demand intake is manifest-first in this release. Automatic repo analysis
+  remains a later expansion after the urgent repo path is proven.
 - Math source notes now have a generated book-to-concept bridge bundle for
   local-mirror staging.
 - Computer-science source notes now have a generated source-to-project bridge

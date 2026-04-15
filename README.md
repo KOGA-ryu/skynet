@@ -21,6 +21,8 @@ Patch-bundle schema: [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md)
 
 Backup restore guide: [BACKUP_RESTORE.md](BACKUP_RESTORE.md)
 
+Repo-demand intake manifest guide: [INTAKE_MANIFEST.md](INTAKE_MANIFEST.md)
+
 Optional command shortcut after `python3 -m pip install -e .`:
 
 ```bash
@@ -79,6 +81,9 @@ python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality stub-fill-queue --limit 25 --json
 python3 -m wiki_tool page-quality unclear-hubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
+python3 -m wiki_tool intake validate --input tests/fixtures/intake/demo_manifest.json --repo-root tests/fixtures/intake/repo --json
+python3 -m wiki_tool intake write --input tests/fixtures/intake/demo_manifest.json --repo-root tests/fixtures/intake/repo --output-dir state/intake --json
+python3 -m wiki_tool intake bundle --input tests/fixtures/intake/demo_manifest.json --repo-root tests/fixtures/intake/repo --wiki-root state/wiki_mirror --output patch_bundles/intake_demo_repo_demand.json --json
 python3 -m wiki_tool devrefs audit --json
 python3 -m wiki_tool devrefs bundle --output patch_bundles/devrefs_preview.json --json
 python3 -m wiki_tool patch-bundle validate patch_bundles/devrefs_preview.json --wiki-root /Volumes/wiki --json
@@ -182,6 +187,17 @@ Page quality reports:
   `state/page_quality/stub_fill_packets/`.
 - Markdown report writes are local-only under ignored `state/page_quality/`;
   they do not edit NAS Markdown.
+
+Repo-demand intake:
+
+- `intake validate` checks a reviewed repo-demand manifest and optional local
+  repo evidence paths.
+- `intake write` emits ignored local Markdown queues and a librarian packet
+  under `state/intake/<intake_id>/`.
+- `intake bundle` writes a reviewable patch bundle for a library operation
+  packet and, when possible, an exact-block update to the library intake queue.
+- Intake commands do not apply bundles and do not edit `state/wiki_mirror` or
+  the NAS.
 
 Design rules:
 

@@ -1,0 +1,63 @@
+{
+  "findings": [
+    {
+      "confidence": "docs-confirmed",
+      "evidence": [
+        {
+          "label": "adapter notes",
+          "line": 3,
+          "path": "README.md"
+        },
+        {
+          "label": "architecture doc",
+          "path": "docs/architecture.md"
+        }
+      ],
+      "id": "demo.adapter_boundary",
+      "selected_targets": [
+        "concepts/architecture.md"
+      ],
+      "status": "routed",
+      "summary": "Keep external adapters outside the core service boundary.",
+      "tags": [
+        "adapter_boundary",
+        "architecture"
+      ],
+      "title": "Adapter boundary before core logic"
+    },
+    {
+      "confidence": "operator-confirmed",
+      "evidence": [
+        "README.md"
+      ],
+      "id": "demo.queue_first",
+      "status": "captured",
+      "summary": "Capture review findings before promoting them into durable notes.",
+      "tags": [
+        "intake",
+        "queue"
+      ],
+      "title": "Queue findings before promotion"
+    },
+    {
+      "confidence": "inference",
+      "evidence": [
+        "docs/missing.md"
+      ],
+      "id": "demo.defer_runtime",
+      "status": "deferred",
+      "summary": "Runtime expansion needs stronger evidence before promotion.",
+      "title": "Defer runtime expansion"
+    }
+  ],
+  "intake_id": "demo_repo_demand",
+  "repo": {
+    "branch": "main",
+    "commit": "abc1234",
+    "name": "demo-repo",
+    "url": "https://example.com/demo-repo"
+  },
+  "source_type": "repo_demand",
+  "title": "Demo Repo Demand",
+  "topic": "library_operations"
+}

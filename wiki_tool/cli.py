@@ -53,6 +53,12 @@ from wiki_tool.harness import (
     validate_harness_specs,
 )
 from wiki_tool.health import DEFAULT_TESTS_DIR, run_health
+from wiki_tool.intake import (
+    build_intake_patch_bundle,
+    DEFAULT_INTAKE_DIR,
+    validate_intake_manifest,
+    write_intake_outputs,
+)
 from wiki_tool.jsonrpc_api import DEFAULT_API_TRACE, handle_jsonrpc_text
 from wiki_tool.llm import DEFAULT_OPENAI_MODEL
 from wiki_tool.missing_notes import build_missing_notes_patch_bundle, missing_note_audit
@@ -229,6 +235,28 @@ def build_parser() -> argparse.ArgumentParser:
     add_json_flag(page_quality_write)
     page_quality_write.add_argument("--output-dir", type=Path, default=DEFAULT_PAGE_QUALITY_DIR)
     page_quality_write.set_defaults(func=cmd_page_quality_write)
+
+    intake = sub.add_parser("intake", help="repo-demand intake workflow helpers")
+    add_json_flag(intake)
+    intake_sub = intake.add_subparsers(required=True)
+    intake_validate = intake_sub.add_parser("validate", help="validate a repo-demand intake manifest")
+    add_json_flag(intake_validate)
+    intake_validate.add_argument("--input", type=Path, required=True)
+    intake_validate.add_argument("--repo-root", type=Path)
+    intake_validate.set_defaults(func=cmd_intake_validate)
+    intake_write = intake_sub.add_parser("write", help="write local intake queue artifacts")
+    add_json_flag(intake_write)
+    intake_write.add_argument("--input", type=Path, required=True)
+    intake_write.add_argument("--repo-root", type=Path)
+    intake_write.add_argument("--output-dir", type=Path, default=DEFAULT_INTAKE_DIR)
+    intake_write.set_defaults(func=cmd_intake_write)
+    intake_bundle = intake_sub.add_parser("bundle", help="write a local intake patch bundle")
+    add_json_flag(intake_bundle)
+    intake_bundle.add_argument("--input", type=Path, required=True)
+    intake_bundle.add_argument("--repo-root", type=Path)
+    intake_bundle.add_argument("--wiki-root", type=Path)
+    intake_bundle.add_argument("--output", type=Path, required=True)
+    intake_bundle.set_defaults(func=cmd_intake_bundle)
 
     audit = sub.add_parser("audit", help="summarize catalog health")
     add_json_flag(audit)
@@ -580,6 +608,29 @@ def cmd_page_quality_stub_fill_queue(args: argparse.Namespace) -> dict[str, Any]
 
 def cmd_page_quality_write(args: argparse.Namespace) -> dict[str, Any]:
     return write_page_quality_reports(args.db, output_dir=args.output_dir)
+
+
+def cmd_intake_validate(args: argparse.Namespace) -> dict[str, Any]:
+    return validate_intake_manifest(args.input, repo_root=args.repo_root)
+
+
+def cmd_intake_write(args: argparse.Namespace) -> dict[str, Any]:
+    return write_intake_outputs(args.input, repo_root=args.repo_root, output_dir=args.output_dir)
+
+
+def cmd_intake_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    bundle = build_intake_patch_bundle(args.input, repo_root=args.repo_root, wiki_root=args.wiki_root)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")
+    validation = validate_patch_bundle(args.output, wiki_root=args.wiki_root)
+    return {
+        "bundle_id": bundle["bundle_id"],
+        "output": str(args.output),
+        "skipped_count": len(bundle.get("skipped", [])),
+        "target_count": len(bundle["targets"]),
+        "valid": validation["valid"],
+        "validation_errors": validation["errors"],
+    }
 
 
 def cmd_audit(args: argparse.Namespace) -> dict[str, Any]:
