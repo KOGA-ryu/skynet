@@ -18,8 +18,8 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `0131921` (`Add eval cleanup targets`).
-- [ ] Current active task: add optional scheduled scan/audit runner.
+- [x] Latest source checkpoint: `f937573` (`Add scheduled audit runner`).
+- [ ] Current active task: add package entry point if CLI use becomes frequent.
 - [x] Generated stub report status: complete; `page-quality stubs` found 80
   generated stubs with 250 inbound references, and `page-quality write` now
   writes `generated_stubs.md`.
@@ -57,6 +57,9 @@ as tasks move from planned work into implemented, verified tooling.
   eval-driven cleanup targets: 14 P0, 18 P1, and 2 P2, with actions split
   across 24 opening summaries, 4 hub-navigation fixes, and 6 search-term or
   bridge-link improvements.
+- [x] Scheduled audit runner status: complete; latest local run passed with
+  audit and harness required, eval advisory at 35/39 query pass rate, and 20
+  emitted cleanup targets from 34 candidates.
 - [ ] Deferred environment task: Windows PC access is tapped off until the
   machine direction is settled, likely after a Linux conversion.
 
@@ -110,7 +113,7 @@ as tasks move from planned work into implemented, verified tooling.
   build.
 - [x] Add a single health command that runs scan, audit, harness validation, and
   unit tests.
-- [ ] Add optional scheduled scan/audit runner.
+- [x] Add optional scheduled scan/audit runner.
 
 ## Phase 2: Link Hygiene And Navigation Value
 
@@ -254,18 +257,19 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add optional scheduled scan/audit runner.
-2. [ ] Add package entry point if CLI use becomes frequent.
-3. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
+1. [ ] Add package entry point if CLI use becomes frequent.
+2. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
    wiki.
-4. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
+3. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
     into useful pages.
-5. [ ] Add an intake process for new notes.
-6. [ ] Add a promote process for rough notes becoming canonical pages.
-7. [ ] Add a template-placeholder policy so templates stay useful without
+4. [ ] Add an intake process for new notes.
+5. [ ] Add a promote process for rough notes becoming canonical pages.
+6. [ ] Add a template-placeholder policy so templates stay useful without
    polluting audits.
-8. [ ] Document editor workflow for MacBook.
-9. [ ] Add recurring audit review cadence.
+7. [ ] Document editor workflow for MacBook.
+8. [ ] Add recurring audit review cadence.
+9. [ ] Decide whether `dev://` needs a clickable local handler or CLI-only
+   resolution is enough.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -310,6 +314,18 @@ python3 -m wiki_tool eval cleanup-targets --write-report --json
 ```
 
 Eval runs include broken-link regression scoring from the current catalog.
+
+Scheduled audit:
+
+```bash
+python3 -m wiki_tool scheduled-audit run --json
+python3 -m wiki_tool scheduled-audit run --write-report --json
+python3 -m wiki_tool scheduled-audit run --require-eval --json
+```
+
+Scheduled audit reports are local ignored Markdown under
+`state/scheduled_audits/`. Eval is advisory by default until the cleanup queue
+is burned down; use `--require-eval` when eval should be a blocking gate.
 
 API:
 
