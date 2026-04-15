@@ -14,13 +14,13 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
-- [x] Latest scan run: `scan:20260415T102707Z:f4351838b68707a7`.
+- [x] Latest scan run: `scan:20260415T112457Z:f4351838b68707a7`.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `bff0288` (`Add project librarian reports`).
-- [ ] Current active task: add stale-scan detection when the NAS has changed
-  after the last catalog build.
+- [x] Latest source checkpoint: `084ad32` (`Add stale scan detection`).
+- [ ] Current active task: compare retrieval profiles before changing search
+  behavior.
 - [x] Generated stub report status: complete; `page-quality stubs` found 80
   generated stubs with 250 inbound references, and `page-quality write` now
   writes `generated_stubs.md`.
@@ -41,6 +41,9 @@ as tasks move from planned work into implemented, verified tooling.
   bundle/catalog roots to match `--wiki-root`.
 - [x] Local mirror status: complete, with `state/wiki_mirror/` refreshed from
   the NAS and heavy stock-trading payloads excluded.
+- [x] Stale-scan detection status: complete; `scan-status` and `audit` report
+  freshness against the catalog root or an override root, with live mirror
+  freshness passing across 845 documents and 1,314 tracked files.
 - [x] Project-level librarian reports status: complete; live reports summarize
   7 top-level projects, 79 project generated stubs, 331 reviewable orphans,
   658 weak summaries, 223 thin notes, and 51 unclear hubs.
@@ -95,7 +98,7 @@ as tasks move from planned work into implemented, verified tooling.
   full-file reads.
 - [x] Add `open` command with Mac and Windows path translation.
 - [x] Verify current audit passes with zero actionable broken links.
-- [ ] Add stale-scan detection when the NAS has changed after the last catalog
+- [x] Add stale-scan detection when the NAS has changed after the last catalog
   build.
 - [x] Add a single health command that runs scan, audit, harness validation, and
   unit tests.
@@ -243,18 +246,18 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add stale-scan detection when the NAS has changed after the last catalog
-   build.
-2. [ ] Compare retrieval profiles before changing search behavior.
-3. [ ] Use eval results to choose cleanup targets instead of relying on memory.
-4. [ ] Add optional scheduled scan/audit runner.
-5. [ ] Add package entry point if CLI use becomes frequent.
-6. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
+1. [ ] Compare retrieval profiles before changing search behavior.
+2. [ ] Use eval results to choose cleanup targets instead of relying on memory.
+3. [ ] Add optional scheduled scan/audit runner.
+4. [ ] Add package entry point if CLI use becomes frequent.
+5. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
    wiki.
-7. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
+6. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
     into useful pages.
-8. [ ] Add an intake process for new notes.
-9. [ ] Add a promote process for rough notes becoming canonical pages.
+7. [ ] Add an intake process for new notes.
+8. [ ] Add a promote process for rough notes becoming canonical pages.
+9. [ ] Add a template-placeholder policy so templates stay useful without
+   polluting audits.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -270,6 +273,8 @@ Local mirror:
 ```bash
 tools/sync_wiki_mirror.sh
 python3 -m wiki_tool scan --wiki-root state/wiki_mirror --json
+python3 -m wiki_tool scan-status --json
+python3 -m wiki_tool scan-status --wiki-root /Volumes/wiki --limit 25 --json
 python3 -m wiki_tool audit --json
 ```
 
