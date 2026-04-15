@@ -13,13 +13,13 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest audit status: pass.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
-- [x] Catalog size: 844 documents, 4,255 links, 6,663 spans, 7,485 symbols.
-- [x] Latest scan run: `scan:20260415T124307Z:f4351838b68707a7`.
+- [x] Catalog size: 845 documents, 4,409 links, 6,690 spans, 7,513 symbols.
+- [x] Latest scan run: `scan:20260415T125936Z:f4351838b68707a7`.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `154bd47` (`Add source shelf cleanup bundles`).
-- [ ] Current active task: add book-to-concept bridge maps for math.
+- [x] Latest source checkpoint: `627aa2f` (`Add math source bridge bundles`).
+- [ ] Current active task: add book-to-project bridge maps for computer science.
 - [x] Generated stub report status: complete; `page-quality stubs` found 80
   generated stubs with 250 inbound references, and `page-quality write` now
   writes `generated_stubs.md`.
@@ -42,7 +42,7 @@ as tasks move from planned work into implemented, verified tooling.
   the NAS and heavy stock-trading payloads excluded.
 - [x] Stale-scan detection status: complete; `scan-status` and `audit` report
   freshness against the catalog root or an override root, with live mirror
-  freshness passing across 844 documents and 1,313 tracked files.
+  freshness passing across 845 documents and 1,314 tracked files.
 - [x] Project-level librarian reports status: complete; live reports summarize
   7 top-level projects, 79 project generated stubs, 331 reviewable orphans,
   658 weak summaries, 223 thin notes, and 51 unclear hubs.
@@ -70,6 +70,11 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Local cleanup bundle status: applied to `state/wiki_mirror` only via
   `patch_bundles/source_shelves_computer_cleanup.json`, with rollback manifest
   under `backups/bundle_source-shelves_computer-cleanup_20260415T124251Z/`.
+- [x] Math book-to-concept bridge status: complete in the local mirror;
+  `sources/math/book_to_concept_bridge_map.md` now routes 23 maintained math
+  source notes across 9 concept routes, and `sources/math/README.md` now points
+  to the generated bridge map. Latest local rollback manifest:
+  `backups/bundle_source-shelves_math-bridge-map_20260415T125921Z/`.
 - [ ] Deferred environment task: Windows PC access is tapped off until the
   machine direction is settled, likely after a Linux conversion.
 
@@ -250,7 +255,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Use source shelf reports to prioritize math/computer book cleanup.
 - [x] Use source shelf reports to fill computer science source-note summaries.
 - [x] Apply the first computer source-shelf cleanup bundle to the local mirror.
-- [ ] Add book-to-concept bridge maps for math.
+- [x] Add book-to-concept bridge maps for math.
 - [ ] Add book-to-project bridge maps for computer science.
 - [ ] Add an intake process for new notes.
 - [ ] Add a promote process for rough notes becoming canonical pages.
@@ -273,17 +278,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add book-to-concept bridge maps for math.
-2. [ ] Add book-to-project bridge maps for computer science.
-3. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
+1. [ ] Add book-to-project bridge maps for computer science.
+2. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
     into useful pages.
-4. [ ] Add an intake process for new notes.
-5. [ ] Add a promote process for rough notes becoming canonical pages.
-6. [ ] Add a template-placeholder policy so templates stay useful without
+3. [ ] Add an intake process for new notes.
+4. [ ] Add a promote process for rough notes becoming canonical pages.
+5. [ ] Add a template-placeholder policy so templates stay useful without
    polluting audits.
-7. [ ] Document editor workflow for MacBook.
-8. [ ] Add recurring audit review cadence.
-9. [ ] Decide when the local source-shelf cleanup should be promoted to NAS.
+6. [ ] Document editor workflow for MacBook.
+7. [ ] Add recurring audit review cadence.
+8. [ ] Decide when local source-shelf changes should be promoted to NAS.
+9. [ ] Verify local mirror bridge pages after the next NAS refresh.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -370,6 +375,7 @@ python3 -m wiki_tool source-shelves show math --limit 25 --json
 python3 -m wiki_tool source-shelves show computer --limit 25 --json
 python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --limit 25 --json
 python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
+python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/source_shelves_math_bridge_map.json --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
