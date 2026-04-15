@@ -19,7 +19,8 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `45adfe3` (`Add page quality reports`).
-- [ ] Current active task: add richer bundle schema docs.
+- [ ] Current active task: add preflight check that refuses writes when catalog
+  root and bundle root disagree.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -119,7 +120,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Preserve applied bundle backups under `backups/`.
 - [x] Add rollback command that can restore files from a bundle manifest.
 - [x] Add bundle report command that summarizes changed files and target types.
-- [ ] Add richer bundle schema docs.
+- [x] Add richer bundle schema docs.
 - [ ] Add preflight check that refuses writes when catalog root and bundle root
   disagree.
 
@@ -220,16 +221,16 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add richer bundle schema docs.
-2. [ ] Add preflight check that refuses writes when catalog root and bundle root
+1. [ ] Add preflight check that refuses writes when catalog root and bundle root
    disagree.
-3. [ ] Tighten contract and schema validation.
-4. [ ] Add trace diffing between harness runs.
-5. [ ] Add backup restore docs.
-6. [ ] Add broken-link regression scoring to eval reports.
-7. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
-8. [ ] Add release notes for the first usable build.
-9. [ ] Build a report of generated stubs that still need human content.
+2. [ ] Tighten contract and schema validation.
+3. [ ] Add trace diffing between harness runs.
+4. [ ] Add backup restore docs.
+5. [ ] Add broken-link regression scoring to eval reports.
+6. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
+7. [ ] Add release notes for the first usable build.
+8. [ ] Build a report of generated stubs that still need human content.
+9. [ ] Add project-level librarian reports.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -279,6 +280,8 @@ python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 ```
 
 Patch bundles:
+
+Schema: `PATCH_BUNDLE_SCHEMA.md`
 
 ```bash
 python3 -m wiki_tool patch-bundle validate <bundle.json> --wiki-root /Volumes/wiki --json

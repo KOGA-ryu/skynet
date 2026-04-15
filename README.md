@@ -14,6 +14,8 @@ Active build tracker: [ROADMAP_TASKLIST.md](ROADMAP_TASKLIST.md)
 
 Setup guide: [SETUP.md](SETUP.md)
 
+Patch-bundle schema: [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md)
+
 Run the full local health checkpoint:
 
 ```bash
@@ -134,6 +136,8 @@ Design rules:
 - Project reports are local read-layer outputs unless explicitly promoted
   through a later review workflow.
 - Page quality reports are deterministic local queues for editorial review.
+- Patch bundle target schema and rollback safety rules are documented in
+  [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md).
 - Applied patch manifests can be reported and rolled back. Rollback verifies
   current file hashes before restoring backups or deleting generated stubs.
 - No mass frontmatter rollout.

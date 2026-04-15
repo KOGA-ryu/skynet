@@ -96,6 +96,9 @@ explicitly requires checking the LLM adapter.
 Read-only commands can run directly against `state/catalog.sqlite` after a
 scan. Any NAS write should go through the patch-bundle flow:
 
+Schema details and supported target types are documented in
+[PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md).
+
 ```bash
 python3 -m wiki_tool patch-bundle validate patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --json
 python3 -m wiki_tool patch-bundle report patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --json
