@@ -19,7 +19,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `c581bb9` (`Add wiki eval runner`).
-- [ ] Current active task: add the first bounded knowledge API surface.
+- [ ] Current active task: add install/setup instructions.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -161,18 +161,18 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Phase 6: Knowledge Server And API
 
-- [ ] Choose initial API shape: JSON-RPC, MCP-style local server, or simple CLI
+- [x] Choose initial API shape: JSON-RPC, MCP-style local server, or simple CLI
   wrapper service.
-- [ ] Add bounded method for `symbol.search`.
-- [ ] Add bounded method for `span.searchText`.
-- [ ] Add bounded method for `span.listHeadings`.
-- [ ] Add bounded method for `link.findReferences`.
-- [ ] Add bounded method for `audit.summary`.
+- [x] Add bounded method for `symbol.search`.
+- [x] Add bounded method for `span.searchText`.
+- [x] Add bounded method for `span.listHeadings`.
+- [x] Add bounded method for `link.findReferences`.
+- [x] Add bounded method for `audit.summary`.
 - [ ] Add bounded method for `harness.run`.
 - [ ] Add bounded method for `harness.show`.
-- [ ] Record query traces and policy decisions.
-- [ ] Return handles and spans by default instead of whole documents.
-- [ ] Add tests for API response limits.
+- [x] Record query traces and policy decisions.
+- [x] Return handles and spans by default instead of whole documents.
+- [x] Add tests for API response limits.
 
 ## Phase 7: Mac And Windows Access
 
@@ -220,17 +220,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add the first bounded knowledge API surface.
-2. [ ] Add install/setup instructions.
-3. [ ] Add page quality reports for thin notes, missing summaries, and unclear
+1. [ ] Add install/setup instructions.
+2. [ ] Add page quality reports for thin notes, missing summaries, and unclear
    hub pages.
-4. [ ] Add richer bundle schema docs.
-5. [ ] Add preflight check that refuses writes when catalog root and bundle root
+3. [ ] Add richer bundle schema docs.
+4. [ ] Add preflight check that refuses writes when catalog root and bundle root
    disagree.
-6. [ ] Tighten contract and schema validation.
-7. [ ] Add trace diffing between harness runs.
-8. [ ] Add backup restore docs.
-9. [ ] Add broken-link regression scoring to eval reports.
+5. [ ] Tighten contract and schema validation.
+6. [ ] Add trace diffing between harness runs.
+7. [ ] Add backup restore docs.
+8. [ ] Add broken-link regression scoring to eval reports.
+9. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -256,6 +256,13 @@ Eval:
 ```bash
 python3 -m wiki_tool eval run --json
 python3 -m wiki_tool eval run --write-report --json
+```
+
+API:
+
+```bash
+python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method":"symbol.search","params":{"query":"adapter boundary"}}' --json
+python3 -m wiki_tool api serve
 ```
 
 Link queues:

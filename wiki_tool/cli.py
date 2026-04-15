@@ -42,6 +42,7 @@ from wiki_tool.harness import (
     validate_harness_specs,
 )
 from wiki_tool.health import DEFAULT_TESTS_DIR, run_health
+from wiki_tool.jsonrpc_api import DEFAULT_API_TRACE, handle_jsonrpc_text
 from wiki_tool.llm import DEFAULT_OPENAI_MODEL
 from wiki_tool.missing_notes import build_missing_notes_patch_bundle, missing_note_audit
 from wiki_tool.patch_bundle import (
@@ -221,6 +222,21 @@ def build_parser() -> argparse.ArgumentParser:
     eval_run.add_argument("--write-report", action="store_true")
     eval_run.add_argument("--report-dir", type=Path, default=DEFAULT_EVAL_REPORT_DIR)
     eval_run.set_defaults(func=cmd_eval_run)
+
+    api = sub.add_parser("api", help="bounded JSON-RPC knowledge API helpers")
+    add_json_flag(api)
+    api_sub = api.add_subparsers(required=True)
+    api_request = api_sub.add_parser("request", help="handle one JSON-RPC request")
+    add_json_flag(api_request)
+    api_request.add_argument("--request-json", required=True)
+    api_request.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    api_request.add_argument("--trace-path", type=Path, default=DEFAULT_API_TRACE)
+    api_request.set_defaults(func=cmd_api_request)
+    api_serve = api_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdin/stdout")
+    add_json_flag(api_serve)
+    api_serve.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    api_serve.add_argument("--trace-path", type=Path, default=DEFAULT_API_TRACE)
+    api_serve.set_defaults(func=cmd_api_serve)
 
     harness = sub.add_parser("harness", help="executable harness helpers")
     add_json_flag(harness)
@@ -500,6 +516,28 @@ def cmd_eval_run(args: argparse.Namespace) -> dict[str, Any]:
         write_report=args.write_report,
         report_dir=args.report_dir,
     )
+
+
+def cmd_api_request(args: argparse.Namespace) -> dict[str, Any] | None:
+    return handle_jsonrpc_text(
+        args.request_json,
+        db_path=args.catalog_db,
+        trace_path=args.trace_path,
+    )
+
+
+def cmd_api_serve(args: argparse.Namespace) -> None:
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        response = handle_jsonrpc_text(
+            line,
+            db_path=args.catalog_db,
+            trace_path=args.trace_path,
+        )
+        if response is not None:
+            print(json.dumps(response, sort_keys=True), flush=True)
+    return None
 
 
 def cmd_patch_validate(args: argparse.Namespace) -> dict[str, Any]:
