@@ -18,9 +18,11 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `a18e5b9` (`Add first usable build release notes`).
-- [ ] Current active task: build a report of generated stubs that still need
-  human content.
+- [x] Latest source checkpoint: `1b7d058` (`Add generated stub report`).
+- [ ] Current active task: add project-level librarian reports.
+- [x] Generated stub report status: complete; `page-quality stubs` found 80
+  generated stubs with 250 inbound references, and `page-quality write` now
+  writes `generated_stubs.md`.
 - [x] First usable build release notes status: complete; see
   `RELEASE_NOTES.md`.
 - [x] JSON-RPC harness API status: complete; `harness.run` and `harness.show`
@@ -214,7 +216,7 @@ as tasks move from planned work into implemented, verified tooling.
 
 - [x] Generate conservative stubs for missing Markdown pages.
 - [x] Preserve existing wiki navigation while reducing broken links.
-- [ ] Build a report of generated stubs that still need human content.
+- [x] Build a report of generated stubs that still need human content.
 - [x] Add page quality reports for thin notes, missing summaries, and unclear
   hub pages.
 - [ ] Add project-level librarian reports.
@@ -239,19 +241,19 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Build a report of generated stubs that still need human content.
-2. [ ] Add project-level librarian reports.
-3. [ ] Add stale-scan detection when the NAS has changed after the last catalog
+1. [ ] Add project-level librarian reports.
+2. [ ] Add stale-scan detection when the NAS has changed after the last catalog
    build.
-4. [ ] Compare retrieval profiles before changing search behavior.
-5. [ ] Use eval results to choose cleanup targets instead of relying on memory.
-6. [ ] Add optional scheduled scan/audit runner.
-7. [ ] Add package entry point if CLI use becomes frequent.
-8. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
+3. [ ] Compare retrieval profiles before changing search behavior.
+4. [ ] Use eval results to choose cleanup targets instead of relying on memory.
+5. [ ] Add optional scheduled scan/audit runner.
+6. [ ] Add package entry point if CLI use becomes frequent.
+7. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
    wiki.
-9. [ ] Revisit PC access after the Windows-to-Linux decision is final.
-10. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
+8. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
     into useful pages.
+9. [ ] Add an intake process for new notes.
+10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
 
@@ -310,6 +312,7 @@ python3 -m wiki_tool aliases list --json
 python3 -m wiki_tool project-reports summary --json
 python3 -m wiki_tool project-reports show stock_trading --json
 python3 -m wiki_tool page-quality summary --json
+python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 ```
 
