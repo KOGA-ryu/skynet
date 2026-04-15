@@ -18,8 +18,9 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `1b7d058` (`Add generated stub report`).
-- [ ] Current active task: add project-level librarian reports.
+- [x] Latest source checkpoint: `bff0288` (`Add project librarian reports`).
+- [ ] Current active task: add stale-scan detection when the NAS has changed
+  after the last catalog build.
 - [x] Generated stub report status: complete; `page-quality stubs` found 80
   generated stubs with 250 inbound references, and `page-quality write` now
   writes `generated_stubs.md`.
@@ -40,8 +41,9 @@ as tasks move from planned work into implemented, verified tooling.
   bundle/catalog roots to match `--wiki-root`.
 - [x] Local mirror status: complete, with `state/wiki_mirror/` refreshed from
   the NAS and heavy stock-trading payloads excluded.
-- [x] Project report implementation status: complete, with 7 top-level projects
-  summarized and local reports written under `state/project_reports/`.
+- [x] Project-level librarian reports status: complete; live reports summarize
+  7 top-level projects, 79 project generated stubs, 331 reviewable orphans,
+  658 weak summaries, 223 thin notes, and 51 unclear hubs.
 - [x] Alias map implementation status: complete, with 6 validated source
   aliases.
 - [ ] Deferred environment task: Windows PC access is tapped off until the
@@ -219,7 +221,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Build a report of generated stubs that still need human content.
 - [x] Add page quality reports for thin notes, missing summaries, and unclear
   hub pages.
-- [ ] Add project-level librarian reports.
+- [x] Add project-level librarian reports.
 - [ ] Add an intake process for new notes.
 - [ ] Add a promote process for rough notes becoming canonical pages.
 - [ ] Add a template-placeholder policy so templates stay useful without
@@ -241,18 +243,18 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add project-level librarian reports.
-2. [ ] Add stale-scan detection when the NAS has changed after the last catalog
+1. [ ] Add stale-scan detection when the NAS has changed after the last catalog
    build.
-3. [ ] Compare retrieval profiles before changing search behavior.
-4. [ ] Use eval results to choose cleanup targets instead of relying on memory.
-5. [ ] Add optional scheduled scan/audit runner.
-6. [ ] Add package entry point if CLI use becomes frequent.
-7. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
+2. [ ] Compare retrieval profiles before changing search behavior.
+3. [ ] Use eval results to choose cleanup targets instead of relying on memory.
+4. [ ] Add optional scheduled scan/audit runner.
+5. [ ] Add package entry point if CLI use becomes frequent.
+6. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
    wiki.
-8. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
+7. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
     into useful pages.
-9. [ ] Add an intake process for new notes.
+8. [ ] Add an intake process for new notes.
+9. [ ] Add a promote process for rough notes becoming canonical pages.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -310,7 +312,8 @@ python3 -m wiki_tool file-links audit --json
 python3 -m wiki_tool aliases validate --json
 python3 -m wiki_tool aliases list --json
 python3 -m wiki_tool project-reports summary --json
-python3 -m wiki_tool project-reports show stock_trading --json
+python3 -m wiki_tool project-reports show stock_trading --limit 25 --json
+python3 -m wiki_tool project-reports write --output-dir state/project_reports --limit 25 --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
