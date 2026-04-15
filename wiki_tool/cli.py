@@ -36,6 +36,7 @@ from wiki_tool.file_links import build_file_links_patch_bundle, file_link_audit
 from wiki_tool.harness import (
     DEFAULT_HARNESS_DB,
     DEFAULT_SPEC_DIR,
+    diff_harness_runs,
     get_harness_run,
     list_harness_runs,
     run_answer_with_citations,
@@ -304,6 +305,13 @@ def build_parser() -> argparse.ArgumentParser:
     harness_show.add_argument("run_id")
     harness_show.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
     harness_show.set_defaults(func=cmd_harness_show)
+    harness_diff = harness_sub.add_parser("diff", help="compare two harness run traces")
+    add_json_flag(harness_diff)
+    harness_diff.add_argument("run_ids", nargs="*", help="base and head run IDs")
+    harness_diff.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    harness_diff.add_argument("--latest", action="store_true", help="compare the two newest harness runs")
+    harness_diff.add_argument("--limit", type=int, default=25, help="maximum changed items to include per section")
+    harness_diff.set_defaults(func=cmd_harness_diff)
 
     patch = sub.add_parser("patch-bundle", help="patch bundle helpers")
     add_json_flag(patch)
@@ -555,6 +563,22 @@ def cmd_harness_runs(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_harness_show(args: argparse.Namespace) -> dict[str, Any]:
     return get_harness_run(args.run_id, args.harness_db)
+
+
+def cmd_harness_diff(args: argparse.Namespace) -> dict[str, Any]:
+    run_ids = args.run_ids
+    if args.latest and run_ids:
+        raise ValueError("Use either --latest or two explicit run IDs, not both")
+    if args.latest:
+        runs = list_harness_runs(args.harness_db, limit=2)["runs"]
+        if len(runs) < 2:
+            raise ValueError("--latest requires at least two harness runs")
+        head_run_id = runs[0]["run_id"]
+        base_run_id = runs[1]["run_id"]
+        return diff_harness_runs(base_run_id, head_run_id, args.harness_db, limit=args.limit)
+    if len(run_ids) != 2:
+        raise ValueError("harness diff requires BASE_RUN_ID and HEAD_RUN_ID, or --latest")
+    return diff_harness_runs(run_ids[0], run_ids[1], args.harness_db, limit=args.limit)
 
 
 def cmd_eval_run(args: argparse.Namespace) -> dict[str, Any]:

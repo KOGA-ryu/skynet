@@ -11,7 +11,9 @@ from unittest.mock import patch
 from wiki_tool.catalog import scan_wiki
 from wiki_tool.cli import build_parser
 from wiki_tool.harness import (
+    RunTrace,
     build_fallback_search_queries,
+    diff_harness_runs,
     extract_yaml_blocks,
     failure_actions_for,
     get_harness_run,
@@ -314,6 +316,120 @@ tools_allowed:
             schema_errors = shown["steps"][2]["output"]["schema_errors"]
             self.assertIn("citations must be array", schema_errors)
 
+    def test_diff_harness_runs_reports_no_behavior_change_for_equivalent_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = Path(tmp) / "catalog.sqlite"
+            harness_db = Path(tmp) / "harness.sqlite"
+            scan_wiki(FIXTURE, catalog_db)
+
+            base = run_answer_with_citations(
+                "retrieval",
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                spec_dir=SPEC_DIR,
+                synthesis="openai",
+                llm_model="fake-model",
+                synthesis_adapter=FakeValidAdapter(),
+            )
+            head = run_answer_with_citations(
+                " retrieval ",
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                spec_dir=SPEC_DIR,
+                synthesis="openai",
+                llm_model="fake-model",
+                synthesis_adapter=FakeValidAdapter(),
+            )
+
+            diff = diff_harness_runs(base["run_id"], head["run_id"], harness_db)
+
+            self.assertFalse(diff["summary"]["changed"])
+            self.assertEqual(diff["summary"]["risk_flags"], [])
+            self.assertEqual(diff["retrieval"]["overlap_count"], diff["retrieval"]["base_count"])
+
+    def test_diff_harness_runs_reports_status_retrieval_and_failure_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = Path(tmp) / "catalog.sqlite"
+            harness_db = Path(tmp) / "harness.sqlite"
+            scan_wiki(FIXTURE, catalog_db)
+
+            base = run_answer_with_citations(
+                "retrieval",
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                spec_dir=SPEC_DIR,
+            )
+            head = run_answer_with_citations(
+                "zzzz no matching fixture term",
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                spec_dir=SPEC_DIR,
+            )
+
+            diff = diff_harness_runs(base["run_id"], head["run_id"], harness_db)
+
+            self.assertTrue(diff["summary"]["changed"])
+            self.assertEqual(diff["status_change"]["base"], "pass")
+            self.assertEqual(diff["status_change"]["head"], "fail")
+            self.assertIn("status_regressed", diff["summary"]["risk_flags"])
+            self.assertIn("new_failures", diff["summary"]["risk_flags"])
+            self.assertGreater(diff["failures"]["added_count"], 0)
+            self.assertGreater(diff["retrieval"]["removed_count"], 0)
+
+    def test_diff_harness_runs_reports_schema_error_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = Path(tmp) / "catalog.sqlite"
+            harness_db = Path(tmp) / "harness.sqlite"
+            scan_wiki(FIXTURE, catalog_db)
+
+            base = run_answer_with_citations(
+                "retrieval",
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                spec_dir=SPEC_DIR,
+                synthesis="openai",
+                llm_model="fake-model",
+                synthesis_adapter=FakeValidAdapter(),
+            )
+            head = run_answer_with_citations(
+                " retrieval ",
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                spec_dir=SPEC_DIR,
+                synthesis="openai",
+                llm_model="fake-model",
+                synthesis_adapter=FakeWrongCitationTypeAdapter(),
+            )
+
+            diff = diff_harness_runs(base["run_id"], head["run_id"], harness_db)
+
+            self.assertTrue(diff["outputs"]["schema_error_changes"]["changed"])
+            self.assertIn("schema_errors_changed", diff["summary"]["risk_flags"])
+            changed_steps = {item["step_id"]: item for item in diff["steps"]["changed_steps"]}
+            self.assertIn("schema_errors", changed_steps["s3_synthesize"]["changed_fields"])
+
+    def test_diff_harness_runs_missing_run_raises_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            harness_db = Path(tmp) / "harness.sqlite"
+
+            with self.assertRaisesRegex(KeyError, "No harness run found"):
+                diff_harness_runs("run:missing:base", "run:missing:head", harness_db)
+
+    def test_cli_harness_diff_latest_selects_two_newest_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            harness_db = Path(tmp) / "harness.sqlite"
+            write_minimal_harness_run(harness_db, "run:old", "2026-04-15T10:00:00+00:00")
+            write_minimal_harness_run(harness_db, "run:base", "2026-04-15T10:01:00+00:00")
+            write_minimal_harness_run(harness_db, "run:head", "2026-04-15T10:02:00+00:00")
+
+            args = build_parser().parse_args(
+                ["harness", "diff", "--latest", "--harness-db", str(harness_db)]
+            )
+            diff = args.func(args)
+
+            self.assertEqual(diff["summary"]["base_run_id"], "run:base")
+            self.assertEqual(diff["summary"]["head_run_id"], "run:head")
+
     def test_answer_harness_enforces_chain_output_required_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             catalog_db = Path(tmp) / "catalog.sqlite"
@@ -463,6 +579,15 @@ tools_allowed:
         self.assertIn("--synthesis", help_text)
         self.assertIn("--llm-model", help_text)
 
+    def test_cli_help_exposes_harness_diff_controls(self) -> None:
+        parser = build_parser()
+        stdout = io.StringIO()
+        with self.assertRaises(SystemExit), redirect_stdout(stdout):
+            parser.parse_args(["harness", "diff", "--help"])
+        help_text = stdout.getvalue()
+        self.assertIn("--latest", help_text)
+        self.assertIn("--limit", help_text)
+
 
 class FakeValidAdapter(StructuredSynthesisAdapter):
     provider = "fake"
@@ -557,6 +682,33 @@ def fake_valid_synthesis_result(chunks, min_citations):
     return SynthesisResult(
         output={"answer_markdown": "Fake structured answer.", "citations": citations},
         metadata={"model": "fake-model", "provider": "fake", "token_usage": {"total_tokens": 7}},
+    )
+
+
+def write_minimal_harness_run(
+    harness_db: Path,
+    run_id: str,
+    started_at: str,
+    *,
+    answer: str = "same answer",
+    status: str = "pass",
+) -> None:
+    trace = RunTrace(run_id=run_id, harness_db=harness_db)
+    trace.start_run(
+        task_id="wiki.answer_with_citations",
+        task_version=1,
+        chain_id="chain.rag_answer",
+        chain_version=1,
+        inputs={"user_query": run_id},
+        started_at=started_at,
+    )
+    trace.record_step("s1_plan", "deterministic", status="ok", output={"query_intent": run_id})
+    trace.finish_run(
+        ended_at=started_at,
+        status=status,
+        outputs={"answer_markdown": answer, "citations": []},
+        metrics={},
+        failures=[],
     )
 
 

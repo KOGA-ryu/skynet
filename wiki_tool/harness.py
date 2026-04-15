@@ -1113,6 +1113,459 @@ def get_harness_run(run_id: str, harness_db: Path = DEFAULT_HARNESS_DB) -> dict[
     }
 
 
+def diff_harness_runs(
+    base_run_id: str,
+    head_run_id: str,
+    harness_db: Path = DEFAULT_HARNESS_DB,
+    *,
+    limit: int = 25,
+) -> dict[str, Any]:
+    base = get_harness_run(base_run_id, harness_db)
+    head = get_harness_run(head_run_id, harness_db)
+    base_run = base["run"]
+    head_run = head["run"]
+    status_change = {
+        "base": base_run["status"],
+        "changed": base_run["status"] != head_run["status"],
+        "head": head_run["status"],
+    }
+    task_change = compare_fields(
+        base_run,
+        head_run,
+        ["task_id", "task_version", "chain_id", "chain_version"],
+    )
+    metrics = diff_mapping(base_run.get("metrics", {}), head_run.get("metrics", {}), limit=limit)
+    steps = diff_steps(base["steps"], head["steps"], limit=limit)
+    retrieval = diff_retrieval_candidates(
+        base["retrieval_candidates"],
+        head["retrieval_candidates"],
+        limit=limit,
+    )
+    citations = diff_citations(
+        base_run.get("outputs", {}).get("citations", []),
+        head_run.get("outputs", {}).get("citations", []),
+        limit=limit,
+    )
+    failures = diff_failures(base["failures"], head["failures"], limit=limit)
+    outputs = diff_outputs(base, head)
+    changed = any(
+        [
+            status_change["changed"],
+            task_change["changed"],
+            metrics["changed"],
+            steps["changed"],
+            retrieval["changed"],
+            citations["changed"],
+            failures["changed"],
+            outputs["changed"],
+        ]
+    )
+    return {
+        "citations": citations,
+        "failures": failures,
+        "harness_db": str(harness_db),
+        "metrics": metrics,
+        "outputs": outputs,
+        "retrieval": retrieval,
+        "status_change": status_change,
+        "steps": steps,
+        "summary": {
+            "base_run_id": base_run_id,
+            "base_status": base_run["status"],
+            "changed": changed,
+            "head_run_id": head_run_id,
+            "head_status": head_run["status"],
+            "risk_flags": diff_risk_flags(
+                status_change=status_change,
+                retrieval=retrieval,
+                failures=failures,
+                outputs=outputs,
+            ),
+        },
+        "task_change": task_change,
+    }
+
+
+def compare_fields(base: dict[str, Any], head: dict[str, Any], fields: list[str]) -> dict[str, Any]:
+    changed = []
+    unchanged = []
+    for field in fields:
+        item = {"field": field, "base": base.get(field), "head": head.get(field)}
+        if item["base"] == item["head"]:
+            unchanged.append(field)
+        else:
+            changed.append(item)
+    return {
+        "changed": bool(changed),
+        "changed_fields": changed,
+        "unchanged_fields": unchanged,
+    }
+
+
+def diff_mapping(base: dict[str, Any], head: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    base_keys = set(base)
+    head_keys = set(head)
+    added = [{"key": key, "head": head[key]} for key in sorted(head_keys - base_keys)]
+    removed = [{"base": base[key], "key": key} for key in sorted(base_keys - head_keys)]
+    changed = []
+    unchanged_count = 0
+    for key in sorted(base_keys & head_keys):
+        if base[key] == head[key]:
+            unchanged_count += 1
+            continue
+        item = {"base": base[key], "head": head[key], "key": key}
+        if numeric(base[key]) and numeric(head[key]):
+            item["delta"] = head[key] - base[key]
+        changed.append(item)
+    return {
+        "added": clip(added, limit),
+        "added_count": len(added),
+        "changed": bool(added or removed or changed),
+        "changed_items": clip(changed, limit),
+        "changed_count": len(changed),
+        "removed": clip(removed, limit),
+        "removed_count": len(removed),
+        "truncated": truncated(added, removed, changed, limit=limit),
+        "unchanged_count": unchanged_count,
+    }
+
+
+def diff_steps(base_steps: list[dict[str, Any]], head_steps: list[dict[str, Any]], *, limit: int) -> dict[str, Any]:
+    base = keyed(base_steps, "step_id")
+    head = keyed(head_steps, "step_id")
+    base_keys = set(base)
+    head_keys = set(head)
+    added = [step_summary(head[key]) for key in sorted(head_keys - base_keys)]
+    removed = [step_summary(base[key]) for key in sorted(base_keys - head_keys)]
+    changed = []
+    unchanged_count = 0
+    for key in sorted(base_keys & head_keys):
+        base_summary = step_summary(base[key])
+        head_summary = step_summary(head[key])
+        changed_fields = [
+            field
+            for field in [
+                "status",
+                "step_type",
+                "tool_name",
+                "input_hash",
+                "output_hash",
+                "schema_errors",
+                "failure_action_statuses",
+                "synthesis_attempt_statuses",
+            ]
+            if base_summary.get(field) != head_summary.get(field)
+        ]
+        if not changed_fields:
+            unchanged_count += 1
+            continue
+        changed.append(
+            {
+                "base": base_summary,
+                "changed_fields": changed_fields,
+                "head": head_summary,
+                "step_id": key,
+            }
+        )
+    return {
+        "added": clip(added, limit),
+        "added_count": len(added),
+        "changed": bool(added or removed or changed),
+        "changed_count": len(changed),
+        "changed_steps": clip(changed, limit),
+        "removed": clip(removed, limit),
+        "removed_count": len(removed),
+        "truncated": truncated(added, removed, changed, limit=limit),
+        "unchanged_count": unchanged_count,
+    }
+
+
+def step_summary(step: dict[str, Any]) -> dict[str, Any]:
+    output = step.get("output", {})
+    return {
+        "failure_action_statuses": failure_action_statuses(output),
+        "input_hash": stable_hash(step.get("input", {})),
+        "output_hash": stable_hash(output),
+        "schema_errors": output.get("schema_errors", []),
+        "status": step.get("status"),
+        "step_id": step.get("step_id"),
+        "step_type": step.get("step_type"),
+        "synthesis_attempt_statuses": synthesis_attempt_statuses(output),
+        "tool_name": step.get("tool_name"),
+    }
+
+
+def failure_action_statuses(output: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "action": item.get("action"),
+            "source_failure_code": item.get("source_failure_code"),
+            "status": item.get("status"),
+        }
+        for item in output.get("failure_actions", [])
+    ]
+
+
+def synthesis_attempt_statuses(output: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "attempt": item.get("attempt"),
+            "provider": item.get("provider"),
+            "schema_errors": item.get("schema_errors", []),
+            "status": item.get("status"),
+        }
+        for item in output.get("synthesis_attempts", [])
+    ]
+
+
+def diff_retrieval_candidates(
+    base_candidates: list[dict[str, Any]],
+    head_candidates: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    base = keyed(base_candidates, "chunk_id")
+    head = keyed(head_candidates, "chunk_id")
+    base_keys = set(base)
+    head_keys = set(head)
+    added = [candidate_summary(head[key]) for key in sorted(head_keys - base_keys)]
+    removed = [candidate_summary(base[key]) for key in sorted(base_keys - head_keys)]
+    changed = []
+    for key in sorted(base_keys & head_keys):
+        base_summary = candidate_summary(base[key])
+        head_summary = candidate_summary(head[key])
+        changed_fields = [
+            field
+            for field in ["rank", "score", "method", "path", "step_id", "heading"]
+            if base_summary.get(field) != head_summary.get(field)
+        ]
+        if changed_fields:
+            item = {
+                "base": base_summary,
+                "changed_fields": changed_fields,
+                "chunk_id": key,
+                "head": head_summary,
+            }
+            if "score" in changed_fields and numeric(base_summary["score"]) and numeric(head_summary["score"]):
+                item["score_delta"] = head_summary["score"] - base_summary["score"]
+            changed.append(item)
+    top_path = {
+        "base": base_candidates[0]["path"] if base_candidates else None,
+        "changed": (base_candidates[0]["path"] if base_candidates else None)
+        != (head_candidates[0]["path"] if head_candidates else None),
+        "head": head_candidates[0]["path"] if head_candidates else None,
+    }
+    return {
+        "added": clip(added, limit),
+        "added_count": len(added),
+        "base_count": len(base_candidates),
+        "changed": bool(added or removed or changed or top_path["changed"]),
+        "changed_candidates": clip(changed, limit),
+        "changed_count": len(changed),
+        "head_count": len(head_candidates),
+        "overlap_count": len(base_keys & head_keys),
+        "removed": clip(removed, limit),
+        "removed_count": len(removed),
+        "top_path_change": top_path,
+        "truncated": truncated(added, removed, changed, limit=limit),
+    }
+
+
+def candidate_summary(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "chunk_id": candidate.get("chunk_id"),
+        "heading": candidate.get("heading"),
+        "method": candidate.get("method"),
+        "path": candidate.get("path"),
+        "rank": candidate.get("rank"),
+        "score": candidate.get("score"),
+        "step_id": candidate.get("step_id"),
+    }
+
+
+def diff_citations(base_citations: list[Any], head_citations: list[Any], *, limit: int) -> dict[str, Any]:
+    base = keyed_citations(base_citations)
+    head = keyed_citations(head_citations)
+    base_keys = set(base)
+    head_keys = set(head)
+    added = [citation_summary(head[key]) for key in sorted(head_keys - base_keys)]
+    removed = [citation_summary(base[key]) for key in sorted(base_keys - head_keys)]
+    return {
+        "added": clip(added, limit),
+        "added_count": len(added),
+        "base_count": len(base_citations) if isinstance(base_citations, list) else 0,
+        "changed": bool(added or removed),
+        "head_count": len(head_citations) if isinstance(head_citations, list) else 0,
+        "removed": clip(removed, limit),
+        "removed_count": len(removed),
+        "truncated": truncated(added, removed, limit=limit),
+    }
+
+
+def keyed_citations(citations: list[Any]) -> dict[str, dict[str, Any]]:
+    if not isinstance(citations, list):
+        return {}
+    result = {}
+    for index, item in enumerate(citations):
+        if not isinstance(item, dict):
+            key = f"non_object:{index}:{stable_hash(item)}"
+            result[key] = {"value": item}
+            continue
+        quote_hash = stable_hash(item.get("quote", ""))
+        key = f"{item.get('artifact_id')}|{item.get('chunk_id')}|{quote_hash}"
+        result[key] = item
+    return result
+
+
+def citation_summary(citation: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "artifact_id": citation.get("artifact_id"),
+        "chunk_id": citation.get("chunk_id"),
+        "quote_hash": stable_hash(citation.get("quote", "")),
+        "relevance_note": citation.get("relevance_note"),
+    }
+
+
+def diff_failures(base_failures: list[dict[str, Any]], head_failures: list[dict[str, Any]], *, limit: int) -> dict[str, Any]:
+    base = keyed_failures(base_failures)
+    head = keyed_failures(head_failures)
+    base_keys = set(base)
+    head_keys = set(head)
+    added = [failure_summary(head[key]) for key in sorted(head_keys - base_keys)]
+    removed = [failure_summary(base[key]) for key in sorted(base_keys - head_keys)]
+    return {
+        "added": clip(added, limit),
+        "added_count": len(added),
+        "base_count": len(base_failures),
+        "changed": bool(added or removed),
+        "head_count": len(head_failures),
+        "removed": clip(removed, limit),
+        "removed_count": len(removed),
+        "truncated": truncated(added, removed, limit=limit),
+    }
+
+
+def keyed_failures(failures: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result = {}
+    for item in failures:
+        key = "|".join(
+            [
+                str(item.get("step_id")),
+                str(item.get("failure_code")),
+                str(item.get("severity")),
+                stable_hash(item.get("details", {})),
+            ]
+        )
+        result[key] = item
+    return result
+
+
+def failure_summary(failure: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "details_hash": stable_hash(failure.get("details", {})),
+        "failure_code": failure.get("failure_code"),
+        "severity": failure.get("severity"),
+        "step_id": failure.get("step_id"),
+    }
+
+
+def diff_outputs(base: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
+    base_outputs = base["run"].get("outputs", {})
+    head_outputs = head["run"].get("outputs", {})
+    base_answer = base_outputs.get("answer_markdown", "")
+    head_answer = head_outputs.get("answer_markdown", "")
+    base_schema_errors = collect_schema_errors(base)
+    head_schema_errors = collect_schema_errors(head)
+    base_citation_count = citation_count(base_outputs.get("citations", []))
+    head_citation_count = citation_count(head_outputs.get("citations", []))
+    answer_changed = base_answer != head_answer
+    citation_count_delta = head_citation_count - base_citation_count
+    schema_errors_changed = base_schema_errors != head_schema_errors
+    return {
+        "answer_changed": answer_changed,
+        "answer_hashes": {
+            "base": stable_hash(base_answer),
+            "head": stable_hash(head_answer),
+        },
+        "changed": answer_changed or citation_count_delta != 0 or schema_errors_changed,
+        "citation_count": {
+            "base": base_citation_count,
+            "delta": citation_count_delta,
+            "head": head_citation_count,
+        },
+        "schema_error_changes": {
+            "base": base_schema_errors,
+            "changed": schema_errors_changed,
+            "head": head_schema_errors,
+        },
+    }
+
+
+def collect_schema_errors(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    items = []
+    for step in trace.get("steps", []):
+        output = step.get("output", {})
+        if output.get("schema_errors"):
+            items.append({"errors": output["schema_errors"], "step_id": step.get("step_id")})
+        for attempt in output.get("synthesis_attempts", []):
+            if attempt.get("schema_errors"):
+                items.append(
+                    {
+                        "attempt": attempt.get("attempt"),
+                        "errors": attempt["schema_errors"],
+                        "step_id": step.get("step_id"),
+                    }
+                )
+    return items
+
+
+def diff_risk_flags(
+    *,
+    status_change: dict[str, Any],
+    retrieval: dict[str, Any],
+    failures: dict[str, Any],
+    outputs: dict[str, Any],
+) -> list[str]:
+    flags = []
+    if status_change["changed"]:
+        flags.append("status_changed")
+    if status_change["base"] == "pass" and status_change["head"] == "fail":
+        flags.append("status_regressed")
+    if failures["added_count"]:
+        flags.append("new_failures")
+    if outputs["schema_error_changes"]["changed"]:
+        flags.append("schema_errors_changed")
+    if retrieval["top_path_change"]["changed"]:
+        flags.append("top_retrieval_path_changed")
+    if outputs["answer_changed"]:
+        flags.append("answer_changed")
+    return flags
+
+
+def keyed(items: list[dict[str, Any]], field: str) -> dict[str, dict[str, Any]]:
+    return {str(item[field]): item for item in items}
+
+
+def citation_count(value: Any) -> int:
+    return len(value) if isinstance(value, list) else 0
+
+
+def numeric(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def stable_hash(value: Any) -> str:
+    return digest(json.dumps(value, sort_keys=True, default=str))
+
+
+def clip(items: list[Any], limit: int) -> list[Any]:
+    return items[: max(0, limit)]
+
+
+def truncated(*groups: list[Any], limit: int) -> bool:
+    return any(len(group) > limit for group in groups)
+
+
 class RunTrace:
     def __init__(self, *, run_id: str, harness_db: Path) -> None:
         self.run_id = run_id
