@@ -12,6 +12,8 @@ Defaults:
 
 Active build tracker: [ROADMAP_TASKLIST.md](ROADMAP_TASKLIST.md)
 
+Setup guide: [SETUP.md](SETUP.md)
+
 Run the full local health checkpoint:
 
 ```bash

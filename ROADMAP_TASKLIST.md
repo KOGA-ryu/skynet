@@ -19,7 +19,8 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `bc108cf` (`Add bounded JSON-RPC knowledge API`).
-- [ ] Current active task: add install/setup instructions.
+- [ ] Current active task: add page quality reports for thin notes, missing
+  summaries, and unclear hub pages.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -212,7 +213,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Verify live audit passes after NAS cleanup bundles.
 - [x] Verify one live harness run passes.
 - [x] Create first git commit checkpoint: `6a592ab`.
-- [ ] Add install/setup instructions.
+- [x] Add install/setup instructions.
 - [x] Add a single smoke-test command.
 - [ ] Add backup restore docs.
 - [ ] Add package entry point if CLI use becomes frequent.
@@ -220,17 +221,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add install/setup instructions.
-2. [ ] Add page quality reports for thin notes, missing summaries, and unclear
+1. [ ] Add page quality reports for thin notes, missing summaries, and unclear
    hub pages.
-3. [ ] Add richer bundle schema docs.
-4. [ ] Add preflight check that refuses writes when catalog root and bundle root
+2. [ ] Add richer bundle schema docs.
+3. [ ] Add preflight check that refuses writes when catalog root and bundle root
    disagree.
-5. [ ] Tighten contract and schema validation.
-6. [ ] Add trace diffing between harness runs.
-7. [ ] Add backup restore docs.
-8. [ ] Add broken-link regression scoring to eval reports.
-9. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
+4. [ ] Tighten contract and schema validation.
+5. [ ] Add trace diffing between harness runs.
+6. [ ] Add backup restore docs.
+7. [ ] Add broken-link regression scoring to eval reports.
+8. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
+9. [ ] Add release notes for the first usable build.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
