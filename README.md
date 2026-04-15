@@ -105,6 +105,8 @@ Design rules:
 - Harness runs are persisted separately in `state/harness.sqlite`.
 - Harness synthesis is deterministic by default; OpenAI structured-output
   synthesis is opt-in with `--synthesis openai` and requires `OPENAI_API_KEY`.
+- Harness failures are mapped through the failure taxonomy, with safe retries
+  and deferred remediation actions recorded in run traces.
 - Alias maps are source-controlled read-layer metadata.
 - Project reports are local read-layer outputs unless explicitly promoted
   through a later review workflow.

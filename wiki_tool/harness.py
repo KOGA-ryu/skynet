@@ -60,6 +60,29 @@ def validate_harness_specs(spec_dir: Path = DEFAULT_SPEC_DIR) -> dict[str, Any]:
             chain_id = version.get("chain", {}).get("id")
             if chain_id and chain_id not in registry.specs.get("reasoning_chain", {}):
                 errors.append(f"{version['id']} references missing chain {chain_id}")
+    for taxonomy in registry.specs.get("failure_taxonomy", {}).values():
+        for version in taxonomy:
+            severities = set(version.get("enums", {}).get("severity", []))
+            actions = set(version.get("enums", {}).get("action", []))
+            seen_codes: set[str] = set()
+            for item in version.get("failures", []):
+                code = str(item.get("code", ""))
+                if not code:
+                    errors.append(f"{version.get('id', '<missing>')} has failure without code")
+                if code in seen_codes:
+                    errors.append(f"{version.get('id', '<missing>')} has duplicate failure code {code}")
+                seen_codes.add(code)
+                severity = str(item.get("severity", ""))
+                if severities and severity not in severities:
+                    errors.append(f"{code} uses unknown severity {severity}")
+                respond = item.get("respond", [])
+                if not isinstance(respond, list) or not respond:
+                    errors.append(f"{code} must define at least one response action")
+                    continue
+                for response in respond:
+                    action = str(response.get("action", "")) if isinstance(response, dict) else ""
+                    if actions and action not in actions:
+                        errors.append(f"{code} uses unknown response action {action}")
     return {
         "errors": errors,
         "spec_count": len(registry.all_specs()),
@@ -343,6 +366,7 @@ def run_answer_with_citations(
         started_at=started,
     )
     failures: list[dict[str, Any]] = []
+    failure_actions: list[dict[str, Any]] = []
     outputs: dict[str, Any] = {}
     synthesis_metadata: dict[str, Any] = {"model": llm_model, "provider": synthesis}
     status = "running"
@@ -358,49 +382,148 @@ def run_answer_with_citations(
 
         retrieval_k = int(contract.get("budgets", {}).get("max_retrieval_k", 8))
         chunks = retrieve_catalog_chunks(catalog_db, plan["search_queries"], k=retrieval_k)
+        retrieval_failure_actions: list[dict[str, Any]] = []
+        if not chunks:
+            failures.append(failure("s2_retrieve", "RETRIEVAL_EMPTY", "high", {"query": user_query}))
+            retrieval_failure_actions = record_failure_actions(
+                failure_actions,
+                registry,
+                step_id="s2_retrieve",
+                failure_code="RETRIEVAL_EMPTY",
+                status="deferred",
+                reason="Retrieval fallback chain is not implemented in this task.",
+                only_actions={"expand_retrieval", "retry"},
+            )
         trace.record_step(
             "s2_retrieve",
             "tool",
             tool_name="retriever.search",
             status="ok" if chunks else "failed",
             input_data={"queries": plan["search_queries"], "k": retrieval_k},
-            output={"hit_count": len(chunks)},
+            output={"failure_actions": retrieval_failure_actions, "hit_count": len(chunks)},
             retrieval_candidates=chunks,
         )
-        if not chunks:
-            failures.append(failure("s2_retrieve", "RETRIEVAL_EMPTY", "high", {"query": user_query}))
 
         adapter = synthesis_adapter or synthesis_adapter_for(synthesis=synthesis, model=llm_model)
-        synthesis_started = time.perf_counter()
-        try:
-            synthesis_result = adapter.synthesize(
-                user_query=user_query,
-                chunks=chunks,
-                min_citations=min_citations(contract),
-                output_schema=synthesis_output_schema(),
-            )
-            outputs = synthesis_result.output
-            synthesis_metadata = {
-                **synthesis_result.metadata,
-                "duration_seconds": round(time.perf_counter() - synthesis_started, 3),
-                "mode": synthesis,
-            }
-        except StructuredSynthesisError as exc:
-            outputs = {}
-            synthesis_metadata = {
-                "duration_seconds": round(time.perf_counter() - synthesis_started, 3),
-                "error": str(exc),
-                "model": llm_model,
-                "mode": synthesis,
-                "provider": synthesis,
-                "token_usage": None,
-            }
-            failures.append(
-                failure("s3_synthesize", exc.failure_code, "high", synthesis_metadata)
-            )
-        schema_valid = output_schema_valid(outputs)
-        if not schema_valid:
-            failures.append(failure("s3_synthesize", "OUTPUT_SCHEMA_INVALID", "critical", outputs))
+        synthesis_attempts: list[dict[str, Any]] = []
+        synthesis_failure_actions: list[dict[str, Any]] = []
+        schema_valid = False
+        max_synthesis_attempts = 2
+        attempt = 1
+        while attempt <= max_synthesis_attempts:
+            synthesis_started = time.perf_counter()
+            try:
+                synthesis_result = adapter.synthesize(
+                    user_query=user_query,
+                    chunks=chunks,
+                    min_citations=min_citations(contract),
+                    output_schema=synthesis_output_schema(),
+                )
+                outputs = synthesis_result.output
+                synthesis_metadata = {
+                    **synthesis_result.metadata,
+                    "duration_seconds": round(time.perf_counter() - synthesis_started, 3),
+                    "mode": synthesis,
+                }
+                schema_valid = output_schema_valid(outputs)
+                synthesis_attempts.append(
+                    {
+                        "attempt": attempt,
+                        "failure_code": None if schema_valid else "OUTPUT_SCHEMA_INVALID",
+                        "schema_valid": schema_valid,
+                        "status": "ok" if schema_valid else "failed",
+                    }
+                )
+                if schema_valid:
+                    break
+                if (
+                    attempt < max_synthesis_attempts
+                    and "retry" in failure_response_actions(registry, "OUTPUT_SCHEMA_INVALID")
+                ):
+                    synthesis_failure_actions.extend(
+                        record_failure_actions(
+                            failure_actions,
+                            registry,
+                            step_id="s3_synthesize",
+                            failure_code="OUTPUT_SCHEMA_INVALID",
+                            status="applied",
+                            reason="Synthesis output failed schema validation; retrying once.",
+                            attempt=attempt,
+                            only_actions={"retry"},
+                        )
+                    )
+                    attempt += 1
+                    continue
+                failures.append(failure("s3_synthesize", "OUTPUT_SCHEMA_INVALID", "critical", outputs))
+                if "abort" in failure_response_actions(registry, "OUTPUT_SCHEMA_INVALID"):
+                    synthesis_failure_actions.extend(
+                        record_failure_actions(
+                            failure_actions,
+                            registry,
+                            step_id="s3_synthesize",
+                            failure_code="OUTPUT_SCHEMA_INVALID",
+                            status="applied",
+                            reason="Synthesis output remained schema-invalid after retry budget was exhausted.",
+                            attempt=attempt,
+                            only_actions={"abort"},
+                        )
+                    )
+                break
+            except StructuredSynthesisError as exc:
+                outputs = {}
+                schema_valid = False
+                synthesis_metadata = {
+                    "duration_seconds": round(time.perf_counter() - synthesis_started, 3),
+                    "error": str(exc),
+                    "model": llm_model,
+                    "mode": synthesis,
+                    "provider": synthesis,
+                    "token_usage": None,
+                }
+                synthesis_attempts.append(
+                    {
+                        "attempt": attempt,
+                        "failure_code": exc.failure_code,
+                        "schema_valid": False,
+                        "status": "failed",
+                    }
+                )
+                response_actions = failure_response_actions(registry, exc.failure_code)
+                should_retry = (
+                    exc.failure_code != "LLM_PROVIDER_CONFIG_MISSING"
+                    and "retry" in response_actions
+                    and attempt < max_synthesis_attempts
+                )
+                if should_retry:
+                    synthesis_failure_actions.extend(
+                        record_failure_actions(
+                            failure_actions,
+                            registry,
+                            step_id="s3_synthesize",
+                            failure_code=exc.failure_code,
+                            status="applied",
+                            reason="Structured synthesis failed; retrying once under failure taxonomy policy.",
+                            attempt=attempt,
+                            only_actions={"retry"},
+                        )
+                    )
+                    attempt += 1
+                    continue
+                failures.append(failure("s3_synthesize", exc.failure_code, "high", synthesis_metadata))
+                if "abort" in response_actions:
+                    synthesis_failure_actions.extend(
+                        record_failure_actions(
+                            failure_actions,
+                            registry,
+                            step_id="s3_synthesize",
+                            failure_code=exc.failure_code,
+                            status="applied",
+                            reason="Synthesis cannot continue under current failure taxonomy policy.",
+                            attempt=attempt,
+                            only_actions={"abort"},
+                        )
+                    )
+                break
         trace.record_step(
             "s3_synthesize",
             "deterministic" if synthesis == "deterministic" else "llm",
@@ -411,19 +534,43 @@ def run_answer_with_citations(
                 "min_citations": min_citations(contract),
                 "synthesis": synthesis,
             },
-            output={**outputs, "schema_valid": schema_valid, "synthesis_metadata": synthesis_metadata},
+            output={
+                **outputs,
+                "failure_actions": synthesis_failure_actions,
+                "schema_valid": schema_valid,
+                "synthesis_attempts": synthesis_attempts,
+                "synthesis_metadata": synthesis_metadata,
+            },
         )
 
-        grounded = groundedness_check(outputs.get("citations", []), chunks, min_citations=min_citations(contract))
-        if not grounded["pass"]:
-            failures.append(failure("s4_verify_groundedness", "GROUNDEDNESS_FAIL", "high", grounded))
+        groundedness_failure_actions: list[dict[str, Any]] = []
+        if schema_valid:
+            grounded = groundedness_check(outputs.get("citations", []), chunks, min_citations=min_citations(contract))
+            if not grounded["pass"]:
+                failures.append(failure("s4_verify_groundedness", "GROUNDEDNESS_FAIL", "high", grounded))
+                groundedness_failure_actions = record_failure_actions(
+                    failure_actions,
+                    registry,
+                    step_id="s4_verify_groundedness",
+                    failure_code="GROUNDEDNESS_FAIL",
+                    status="deferred",
+                    reason="Groundedness repair requires the retrieval fallback chain planned as the next task.",
+                    only_actions={"expand_retrieval", "ask_clarifying"},
+                )
+        else:
+            grounded = {
+                "errors": ["synthesis did not produce schema-valid output"],
+                "pass": False,
+                "skipped": True,
+            }
+        grounded_status = "skipped" if not schema_valid else "ok" if grounded["pass"] else "failed"
         trace.record_step(
             "s4_verify_groundedness",
             "tool",
             tool_name="verifier.groundedness_check",
-            status="ok" if grounded["pass"] else "failed",
+            status=grounded_status,
             input_data={"citation_count": len(outputs.get("citations", []))},
-            output=grounded,
+            output={**grounded, "failure_actions": groundedness_failure_actions},
         )
 
         status = "pass" if schema_valid and grounded["pass"] and not failures else "fail"
@@ -432,15 +579,25 @@ def run_answer_with_citations(
             "tool",
             tool_name="store.persist_run",
             status="ok",
-            output={"status": status},
+            output={"failure_actions": failure_actions, "status": status},
         )
     except Exception as exc:
         status = "error"
         failures.append(failure("runtime", "TOOL_CALL_ERROR", "high", {"error": str(exc)}))
+        record_failure_actions(
+            failure_actions,
+            registry,
+            step_id="runtime",
+            failure_code="TOOL_CALL_ERROR",
+            status="deferred",
+            reason="Unexpected tool/runtime errors are recorded and re-raised fail-closed.",
+            only_actions={"retry", "abort"},
+        )
         raise
     finally:
         ended = utc_now()
         metrics = {
+            "failure_action_count": len(failure_actions),
             "failure_count": len(failures),
             "retrieval_hit_count": len(outputs.get("citations", [])),
             "synthesis": synthesis,
@@ -452,7 +609,7 @@ def run_answer_with_citations(
         trace.finish_run(
             ended_at=ended,
             status=status,
-            outputs=outputs,
+            outputs={**outputs, "failure_actions": failure_actions},
             metrics=metrics,
             failures=failures,
         )
@@ -460,6 +617,7 @@ def run_answer_with_citations(
     return {
         "answer_markdown": outputs.get("answer_markdown", ""),
         "citations": outputs.get("citations", []),
+        "failure_actions": failure_actions,
         "failures": failures,
         "harness_db": str(harness_db),
         "run_id": run_id,
@@ -474,6 +632,105 @@ def synthesis_adapter_for(*, synthesis: str, model: str | None) -> StructuredSyn
     if synthesis == "openai":
         return OpenAIStructuredSynthesisAdapter(model=model or DEFAULT_OPENAI_MODEL)
     raise ValueError(f"unsupported synthesis mode: {synthesis}")
+
+
+def failure_response_actions(registry: SpecRegistry, failure_code: str) -> list[str]:
+    _, rule = failure_taxonomy_rule(registry, failure_code)
+    if rule is None:
+        return ["abort"]
+    actions: list[str] = []
+    for response in rule.get("respond", []):
+        if isinstance(response, dict) and isinstance(response.get("action"), str):
+            actions.append(response["action"])
+    return actions
+
+
+def failure_actions_for(
+    registry: SpecRegistry,
+    *,
+    step_id: str,
+    failure_code: str,
+    status: str,
+    reason: str,
+    attempt: int | None = None,
+    only_actions: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    taxonomy, rule = failure_taxonomy_rule(registry, failure_code)
+    if rule is None:
+        records = [
+            {
+                "action": "abort",
+                "reason": f"No failure taxonomy rule exists for {failure_code}; aborting fail-closed.",
+                "source_failure_code": failure_code,
+                "source_step_id": step_id,
+                "status": "applied",
+                "taxonomy_id": None,
+                "taxonomy_version": None,
+                "order": 1,
+            }
+        ]
+    else:
+        records = []
+        for index, response in enumerate(rule.get("respond", []), start=1):
+            if not isinstance(response, dict) or not isinstance(response.get("action"), str):
+                continue
+            action = response["action"]
+            if only_actions is not None and action not in only_actions:
+                continue
+            records.append(
+                {
+                    "action": action,
+                    "reason": reason,
+                    "source_failure_code": failure_code,
+                    "source_step_id": step_id,
+                    "status": status,
+                    "taxonomy_id": taxonomy.get("id"),
+                    "taxonomy_version": taxonomy.get("version"),
+                    "order": index,
+                }
+            )
+    if attempt is not None:
+        for record in records:
+            record["attempt"] = attempt
+    return records
+
+
+def failure_taxonomy_rule(
+    registry: SpecRegistry,
+    failure_code: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None] | tuple[None, None]:
+    try:
+        taxonomy = registry.latest("failure_taxonomy", "failures.core")
+    except KeyError:
+        return None, None
+    for item in taxonomy.get("failures", []):
+        if str(item.get("code")) == failure_code:
+            return taxonomy, item
+    return taxonomy, None
+
+
+def record_failure_actions(
+    action_log: list[dict[str, Any]],
+    registry: SpecRegistry,
+    *,
+    step_id: str,
+    failure_code: str,
+    status: str,
+    reason: str,
+    attempt: int | None = None,
+    only_actions: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    records = failure_actions_for(
+        registry,
+        step_id=step_id,
+        failure_code=failure_code,
+        status=status,
+        reason=reason,
+        attempt=attempt,
+        only_actions=only_actions,
+    )
+    action_log.extend(records)
+    return records
 
 
 def list_harness_runs(harness_db: Path = DEFAULT_HARNESS_DB, *, limit: int = 10) -> dict[str, Any]:
