@@ -13,13 +13,14 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest audit status: pass.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
-- [x] Catalog size: 845 documents, 4,409 links, 6,690 spans, 7,513 symbols.
-- [x] Latest scan run: `scan:20260415T125936Z:f4351838b68707a7`.
+- [x] Catalog size: 846 documents, 4,952 links, 6,776 spans, 7,600 symbols.
+- [x] Latest scan run: `scan:20260415T131916Z:f4351838b68707a7`.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `627aa2f` (`Add math source bridge bundles`).
-- [ ] Current active task: add book-to-project bridge maps for computer science.
+- [x] Latest source checkpoint: `0ee53a9` (`Add computer source project bridge bundles`).
+- [ ] Current active task: add a stub-fill queue so generated placeholder notes
+  can be promoted into useful pages.
 - [x] Generated stub report status: complete; `page-quality stubs` found 80
   generated stubs with 250 inbound references, and `page-quality write` now
   writes `generated_stubs.md`.
@@ -75,6 +76,13 @@ as tasks move from planned work into implemented, verified tooling.
   source notes across 9 concept routes, and `sources/math/README.md` now points
   to the generated bridge map. Latest local rollback manifest:
   `backups/bundle_source-shelves_math-bridge-map_20260415T125921Z/`.
+- [x] Computer source-to-project bridge status: complete in the local mirror;
+  `sources/computer/source_to_project_bridge_map.md` now routes 20 maintained
+  computer source notes across 56 project routes, and
+  `sources/computer/README.md` now points to the generated bridge map. Local
+  rollback manifests:
+  `backups/bundle_source-shelves_computer-project-bridge_20260415T131755Z/`
+  and `backups/bundle_source-shelves_computer-project-bridge_20260415T131900Z/`.
 - [ ] Deferred environment task: Windows PC access is tapped off until the
   machine direction is settled, likely after a Linux conversion.
 
@@ -256,7 +264,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Use source shelf reports to fill computer science source-note summaries.
 - [x] Apply the first computer source-shelf cleanup bundle to the local mirror.
 - [x] Add book-to-concept bridge maps for math.
-- [ ] Add book-to-project bridge maps for computer science.
+- [x] Add source-to-project bridge maps for computer science.
 - [ ] Add an intake process for new notes.
 - [ ] Add a promote process for rough notes becoming canonical pages.
 - [ ] Add a template-placeholder policy so templates stay useful without
@@ -278,18 +286,18 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add book-to-project bridge maps for computer science.
-2. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
+1. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
     into useful pages.
-3. [ ] Add an intake process for new notes.
-4. [ ] Add a promote process for rough notes becoming canonical pages.
-5. [ ] Add a template-placeholder policy so templates stay useful without
+2. [ ] Add an intake process for new notes.
+3. [ ] Add a promote process for rough notes becoming canonical pages.
+4. [ ] Add a template-placeholder policy so templates stay useful without
    polluting audits.
-6. [ ] Document editor workflow for MacBook.
-7. [ ] Add recurring audit review cadence.
-8. [ ] Decide when local source-shelf changes should be promoted to NAS.
-9. [ ] Verify local mirror bridge pages after the next NAS refresh.
-10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
+5. [ ] Document editor workflow for MacBook.
+6. [ ] Add recurring audit review cadence.
+7. [ ] Decide when local source-shelf changes should be promoted to NAS.
+8. [ ] Verify local mirror bridge pages after the next NAS refresh.
+9. [ ] Revisit PC access after the Windows-to-Linux decision is final.
+10. [ ] Add Linux path support if the desktop migration lands on Linux.
 
 ## Core Commands
 
@@ -376,6 +384,7 @@ python3 -m wiki_tool source-shelves show computer --limit 25 --json
 python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --limit 25 --json
 python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
 python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/source_shelves_math_bridge_map.json --json
+python3 -m wiki_tool source-shelves bridge-bundle computer --output patch_bundles/source_shelves_computer_project_bridge_map.json --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
