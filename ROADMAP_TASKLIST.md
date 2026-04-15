@@ -14,11 +14,11 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
-- [x] Latest scan run: `scan:20260415T100732Z:f4351838b68707a7`.
-- [x] Latest harness run: `run:20260415T091149Z:897e722f4b59f5ea`.
+- [x] Latest scan run: `scan:20260415T100809Z:f4351838b68707a7`.
+- [x] Latest harness run: `run:20260415T100815Z:838b2e4cc6371c4c`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `b7476e9` (`Document patch bundle schema`).
+- [x] Latest source checkpoint: `f304207` (`Add local wiki mirror workflow`).
 - [ ] Current active task: add preflight check that refuses writes when catalog
   root and bundle root disagree.
 - [x] Local mirror status: complete, with `state/wiki_mirror/` refreshed from
