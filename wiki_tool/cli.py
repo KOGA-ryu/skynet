@@ -84,12 +84,12 @@ from wiki_tool.scheduled_audit import (
     run_scheduled_audit,
 )
 from wiki_tool.source_shelves import (
-    DEFAULT_SOURCE_SHELF_BRIDGE_BUNDLE,
     DEFAULT_SOURCE_SHELF_CLEANUP_BUNDLE,
     DEFAULT_SOURCE_SHELF_LIMIT,
     DEFAULT_SOURCE_SHELF_REPORT_DIR,
     build_source_shelf_bridge_bundle,
     build_source_shelf_cleanup_bundle,
+    default_source_shelf_bridge_bundle,
     source_shelf_report,
     source_shelf_summary,
     write_source_shelf_reports,
@@ -195,8 +195,8 @@ def build_parser() -> argparse.ArgumentParser:
     source_shelves_cleanup.set_defaults(func=cmd_source_shelves_cleanup_bundle)
     source_shelves_bridge = source_shelves_sub.add_parser("bridge-bundle", help="write a local source shelf bridge-map bundle")
     add_json_flag(source_shelves_bridge)
-    source_shelves_bridge.add_argument("shelf", choices=["math"])
-    source_shelves_bridge.add_argument("--output", type=Path, default=DEFAULT_SOURCE_SHELF_BRIDGE_BUNDLE)
+    source_shelves_bridge.add_argument("shelf", choices=["math", "computer"])
+    source_shelves_bridge.add_argument("--output", type=Path)
     source_shelves_bridge.set_defaults(func=cmd_source_shelves_bridge_bundle)
 
     page_quality = sub.add_parser("page-quality", help="page quality reports for librarian review")
@@ -536,12 +536,13 @@ def cmd_source_shelves_cleanup_bundle(args: argparse.Namespace) -> dict[str, Any
 
 def cmd_source_shelves_bridge_bundle(args: argparse.Namespace) -> dict[str, Any]:
     bundle = build_source_shelf_bridge_bundle(args.db, shelf=args.shelf)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")
-    validation = validate_patch_bundle(args.output)
+    output = args.output or default_source_shelf_bridge_bundle(args.shelf)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")
+    validation = validate_patch_bundle(output)
     return {
         "bundle_id": bundle["bundle_id"],
-        "output": str(args.output),
+        "output": str(output),
         "target_count": len(bundle["targets"]),
         "valid": validation["valid"],
         "validation_errors": validation["errors"],

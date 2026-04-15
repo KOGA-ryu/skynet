@@ -14,13 +14,22 @@ from wiki_tool.page_quality import build_page_quality_report
 
 
 DEFAULT_SOURCE_SHELF_CLEANUP_BUNDLE = Path("patch_bundles/source_shelves_computer_cleanup.json")
-DEFAULT_SOURCE_SHELF_BRIDGE_BUNDLE = Path("patch_bundles/source_shelves_math_bridge_map.json")
+DEFAULT_SOURCE_SHELF_MATH_BRIDGE_BUNDLE = Path("patch_bundles/source_shelves_math_bridge_map.json")
+DEFAULT_SOURCE_SHELF_COMPUTER_BRIDGE_BUNDLE = Path("patch_bundles/source_shelves_computer_project_bridge_map.json")
+DEFAULT_SOURCE_SHELF_BRIDGE_BUNDLE = DEFAULT_SOURCE_SHELF_MATH_BRIDGE_BUNDLE
 DEFAULT_SOURCE_SHELF_REPORT_DIR = Path("state/source_shelf_reports")
 DEFAULT_SOURCE_SHELF_LIMIT = 25
 DEFAULT_SOURCE_SHELVES = ("math", "computer")
 MATH_BRIDGE_MAP_PATH = "sources/math/book_to_concept_bridge_map.md"
 MATH_README_PATH = "sources/math/README.md"
-GENERATED_SOURCE_SHELF_HUBS = {MATH_BRIDGE_MAP_PATH, MATH_README_PATH}
+COMPUTER_BRIDGE_MAP_PATH = "sources/computer/source_to_project_bridge_map.md"
+COMPUTER_README_PATH = "sources/computer/README.md"
+GENERATED_SOURCE_SHELF_HUBS = {
+    COMPUTER_BRIDGE_MAP_PATH,
+    COMPUTER_README_PATH,
+    MATH_BRIDGE_MAP_PATH,
+    MATH_README_PATH,
+}
 COMPUTER_SOURCE_SUMMARIES = {
     "sources/computer/audio_shader_studio_patterns.md": (
         "Use this pattern note when a design needs to turn streaming inputs into named rolling "
@@ -55,6 +64,16 @@ COMPUTER_SOURCE_SUMMARIES = {
         "instruments, pricing engines, market objects, and reusable numerical layers."
     ),
 }
+
+
+def default_source_shelf_bridge_bundle(shelf: str) -> Path:
+    normalized = normalize_shelf(shelf)
+    if normalized == "math":
+        return DEFAULT_SOURCE_SHELF_MATH_BRIDGE_BUNDLE
+    if normalized == "computer":
+        return DEFAULT_SOURCE_SHELF_COMPUTER_BRIDGE_BUNDLE
+    known = ", ".join(DEFAULT_SOURCE_SHELVES)
+    raise KeyError(f"unknown source shelf {shelf!r}; known shelves: {known}")
 
 
 def source_shelf_summary(
@@ -260,27 +279,49 @@ def build_source_shelf_bridge_bundle(
     shelf: str = "math",
 ) -> dict[str, Any]:
     normalized = normalize_shelf(shelf)
-    if normalized != "math":
-        raise ValueError("source shelf bridge bundles currently support only the math shelf")
     scan_run = latest_scan_run(db_path)
     if scan_run is None:
         raise ValueError(f"no scan run found in {db_path}")
     wiki_root = Path(str(scan_run["root"]))
-    bridge = math_book_concept_bridge_map(db_path)
-    outputs = [
-        (
-            MATH_BRIDGE_MAP_PATH,
-            "Math Book-to-Concept Bridge Map",
-            render_math_book_concept_bridge_markdown(bridge),
-            "Create generated math book-to-concept bridge map from the local catalog",
-        ),
-        (
-            MATH_README_PATH,
-            "Math Source Notes",
-            render_math_source_readme(bridge),
-            "Refresh math source shelf hub from the current maintained source notes",
-        ),
-    ]
+    if normalized == "math":
+        bridge = math_book_concept_bridge_map(db_path)
+        bundle_slug = "math-bridge-map"
+        rationale = "Create local math source shelf bridge maps that route concepts to useful books."
+        outputs = [
+            (
+                MATH_BRIDGE_MAP_PATH,
+                "Math Book-to-Concept Bridge Map",
+                render_math_book_concept_bridge_markdown(bridge),
+                "Create generated math book-to-concept bridge map from the local catalog",
+            ),
+            (
+                MATH_README_PATH,
+                "Math Source Notes",
+                render_math_source_readme(bridge),
+                "Refresh math source shelf hub from the current maintained source notes",
+            ),
+        ]
+    elif normalized == "computer":
+        bridge = computer_source_project_bridge_map(db_path)
+        bundle_slug = "computer-project-bridge"
+        rationale = "Create local computer source shelf bridge maps that route source notes to projects."
+        outputs = [
+            (
+                COMPUTER_BRIDGE_MAP_PATH,
+                "Computer Source-to-Project Bridge Map",
+                render_computer_source_project_bridge_markdown(bridge),
+                "Create generated computer source-to-project bridge map from the local catalog",
+            ),
+            (
+                COMPUTER_README_PATH,
+                "Computer Source Notes",
+                render_computer_source_readme(bridge),
+                "Refresh computer source shelf hub from the current maintained source notes",
+            ),
+        ]
+    else:
+        known = ", ".join(DEFAULT_SOURCE_SHELVES)
+        raise KeyError(f"unknown source shelf {shelf!r}; known shelves: {known}")
     targets = [
         target
         for target in (
@@ -296,16 +337,16 @@ def build_source_shelf_bridge_bundle(
         if target is not None
     ]
     if not targets:
-        raise ValueError("no math source shelf bridge targets found")
+        raise ValueError(f"no {normalized} source shelf bridge targets found")
 
     return {
         "backup_manifest": {
             "required_before_apply": True,
             "status": "not_created",
         },
-        "bundle_id": f"bundle:source-shelves:math-bridge-map:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
+        "bundle_id": f"bundle:source-shelves:{bundle_slug}:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
         "created_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
-        "rationale": "Create local math source shelf bridge maps that route concepts to useful books.",
+        "rationale": rationale,
         "source_catalog": {
             "db_path": str(db_path),
             "root": str(scan_run["root"]),
@@ -383,6 +424,94 @@ def math_book_concept_bridge_map(db_path: Path = DEFAULT_DB) -> dict[str, Any]:
     }
 
 
+def computer_source_project_bridge_map(db_path: Path = DEFAULT_DB) -> dict[str, Any]:
+    report = source_shelf_report(db_path, "computer", limit=1000)
+    docs, _links, _headings = load_source_shelf_rows(db_path)
+    text_by_path = {str(doc["path"]): str(doc["text"]) for doc in docs}
+    title_by_path = load_document_title_index(db_path)
+    sources = [
+        computer_source_project_entry(note, text_by_path.get(str(note["path"]), ""), title_by_path)
+        for note in report["notes"]
+        if note["source_type"] != "placeholder"
+    ]
+    projects_by_path: dict[str, dict[str, Any]] = {}
+    lanes_by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for source in sources:
+        lanes_by_name[str(source["lane"])].append(source)
+        for route in source["project_links"]:
+            project_path = str(route["path"])
+            project = projects_by_path.setdefault(
+                project_path,
+                {
+                    "label": str(route["title"]),
+                    "path": project_path,
+                    "sources": [],
+                },
+            )
+            project["sources"].append({**source, "route_kind": route["route_kind"]})
+
+    projects = sorted(
+        (
+            {
+                **project,
+                "source_count": len(project["sources"]),
+                "sources": sorted(
+                    project["sources"],
+                    key=lambda item: (
+                        -int(item["project_count"]),
+                        -int(item["inbound_count"]),
+                        str(item["title"]).lower(),
+                        str(item["path"]),
+                    ),
+                ),
+            }
+            for project in projects_by_path.values()
+        ),
+        key=lambda item: (-int(item["source_count"]), str(item["label"]).lower(), str(item["path"])),
+    )
+    lanes = [
+        {
+            "lane": lane,
+            "source_count": len(items),
+            "sources": sorted(
+                items,
+                key=lambda item: (
+                    -int(item["project_count"]),
+                    -int(item["inbound_count"]),
+                    str(item["title"]).lower(),
+                    str(item["path"]),
+                ),
+            ),
+        }
+        for lane, items in sorted(lanes_by_name.items())
+    ]
+    sorted_sources = sorted(
+        sources,
+        key=lambda item: (
+            -int(item["project_count"]),
+            -int(item["inbound_count"]),
+            str(item["title"]).lower(),
+            str(item["path"]),
+        ),
+    )
+    high_use_sources = sorted_sources[:10]
+
+    return {
+        "catalog_db": str(db_path),
+        "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "high_use_sources": high_use_sources,
+        "lane_counts": {lane["lane"]: lane["source_count"] for lane in lanes},
+        "lanes": lanes,
+        "project_route_count": len(projects),
+        "projects": projects,
+        "sources": sorted_sources,
+        "source_note_count": len(sources),
+        "source_type_counts": source_type_counts(sources),
+        "shelf": "computer",
+    }
+
+
 def source_bridge_entry(note: dict[str, Any], text: str) -> dict[str, Any]:
     concept_links = [
         dict(link)
@@ -399,6 +528,96 @@ def source_bridge_entry(note: dict[str, Any], text: str) -> dict[str, Any]:
         "summary": source_summary_text(text),
         "title": note["title"],
     }
+
+
+def computer_source_project_entry(
+    note: dict[str, Any],
+    text: str,
+    title_by_path: dict[str, str],
+) -> dict[str, Any]:
+    project_links = merge_project_routes(
+        direct_routes=[
+            dict(link)
+            for link in note["concept_project_links"]
+            if is_project_markdown_path(str(link["path"]))
+        ],
+        inbound_routes=[
+            dict(link)
+            for link in note["inbound_usage"]
+            if is_project_markdown_path(str(link["path"]))
+        ],
+        title_by_path=title_by_path,
+    )
+    return {
+        "document_id": note["document_id"],
+        "inbound_count": note["inbound_count"],
+        "lane": note["lane"],
+        "path": note["path"],
+        "project_count": len(project_links),
+        "project_links": project_links,
+        "source_type": note["source_type"],
+        "summary": source_summary_text(text),
+        "title": note["title"],
+    }
+
+
+def merge_project_routes(
+    *,
+    direct_routes: list[dict[str, Any]],
+    inbound_routes: list[dict[str, Any]],
+    title_by_path: dict[str, str],
+) -> list[dict[str, str]]:
+    routes_by_path: dict[str, dict[str, Any]] = {}
+    for route_kind, routes in (("direct", direct_routes), ("inbound", inbound_routes)):
+        for route in routes:
+            path = str(route["path"])
+            entry = routes_by_path.setdefault(
+                path,
+                {
+                    "kinds": set(),
+                    "labels": [],
+                    "path": path,
+                    "title": title_by_path.get(path, readable_path_label(path)),
+                },
+            )
+            entry["kinds"].add(route_kind)
+            label = str(route.get("label") or "")
+            if label and label not in entry["labels"]:
+                entry["labels"].append(label)
+
+    result = []
+    for entry in routes_by_path.values():
+        kinds = entry["kinds"]
+        result.append(
+            {
+                "label": ", ".join(entry["labels"]) or str(entry["title"]),
+                "path": str(entry["path"]),
+                "route_kind": project_route_kind(kinds),
+                "title": str(entry["title"]),
+            }
+        )
+    return sorted(result, key=lambda item: (item["title"].lower(), item["path"]))
+
+
+def project_route_kind(kinds: set[str]) -> str:
+    if {"direct", "inbound"}.issubset(kinds):
+        return "direct+inbound"
+    if "direct" in kinds:
+        return "direct"
+    return "inbound"
+
+
+def is_project_markdown_path(path: str) -> bool:
+    return path.startswith("projects/") and path.endswith(".md")
+
+
+def readable_path_label(path: str) -> str:
+    stem = PurePosixPath(path).stem
+    if stem.lower() == "readme":
+        parent = PurePosixPath(path).parent.name
+        if parent:
+            stem = parent
+    return stem.replace("_", " ").replace("-", " ").title()
 
 
 def create_or_replace_markdown_target(
@@ -545,6 +764,19 @@ def load_source_shelf_rows(
     for row in span_rows:
         headings[str(row["path"])].append(dict(row))
     return [dict(row) for row in docs], [dict(row) for row in links], headings
+
+
+def load_document_title_index(db_path: Path) -> dict[str, str]:
+    with closing(sqlite3.connect(db_path)) as con:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT path, title
+            FROM documents
+            ORDER BY path
+            """
+        ).fetchall()
+    return {str(row["path"]): str(row["title"]) for row in rows}
 
 
 def build_source_note_entry(
@@ -845,6 +1077,13 @@ def lane_counts(notes: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def source_type_counts(notes: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for note in notes:
+        counts[str(note["source_type"])] += 1
+    return dict(sorted(counts.items()))
+
+
 def normalize_shelf(value: str) -> str:
     parts = PurePosixPath(value.strip().strip("/")).parts
     if len(parts) >= 2 and parts[0] == "sources":
@@ -958,6 +1197,164 @@ def render_math_source_readme(bridge: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_computer_source_project_bridge_markdown(bridge: dict[str, Any]) -> str:
+    lines = [
+        "# Computer Source-to-Project Bridge Map",
+        "",
+        f"- source_note_count: `{bridge['source_note_count']}`",
+        f"- project_route_count: `{bridge['project_route_count']}`",
+        "",
+        "## How To Use This Map",
+        "",
+        "- Start with project routes when you need the source notes already supporting a build.",
+        "- Use source routes when choosing which book or OSS pattern note should inform a project decision.",
+        "- Use lane routes when you want a shelf section such as storage, architecture, performance, or numerical stability.",
+        "- Regenerate this map after project or source-note edits so the routes stay aligned with the catalog.",
+        "",
+        "## Project Routes",
+        "",
+    ]
+    if not bridge["projects"]:
+        lines.extend(["- none", ""])
+    for project in bridge["projects"]:
+        lines.extend([f"### [{project['label']}]({relative_wiki_link(str(project['path']))})", ""])
+        for source in project["sources"]:
+            lines.append(computer_project_source_bullet(source))
+        lines.append("")
+
+    lines.extend(["## Source Routes", ""])
+    if not bridge["sources"]:
+        lines.extend(["- none", ""])
+    for source in bridge["sources"]:
+        lines.extend([f"### [{source['title']}]({relative_wiki_link(str(source['path']))})", ""])
+        lines.append(
+            "- type `{source_type}`, lane `{lane}`, project routes `{projects}`, inbound `{inbound}`. {summary}".format(
+                inbound=source["inbound_count"],
+                lane=source["lane"],
+                projects=source["project_count"],
+                source_type=source["source_type"],
+                summary=source["summary"],
+            )
+        )
+        for route in source["project_links"]:
+            lines.append(
+                "- [{title}]({path}) - route `{route_kind}`".format(
+                    path=relative_wiki_link(str(route["path"])),
+                    route_kind=route["route_kind"],
+                    title=route["title"],
+                )
+            )
+        if not source["project_links"]:
+            lines.append("- project routes: none")
+        lines.append("")
+
+    lines.extend(["## Lane Routes", ""])
+    for lane in bridge["lanes"]:
+        lines.extend([f"### `{lane['lane']}`", ""])
+        for source in lane["sources"]:
+            project_links = ", ".join(
+                "[{title}]({path}) `{route_kind}`".format(
+                    path=relative_wiki_link(str(link["path"])),
+                    route_kind=link["route_kind"],
+                    title=link["title"],
+                )
+                for link in source["project_links"]
+            )
+            if not project_links:
+                project_links = "none"
+            lines.append(
+                "- [{title}]({path}) - type `{source_type}`, projects: {projects}. {summary}".format(
+                    path=relative_wiki_link(str(source["path"])),
+                    projects=project_links,
+                    source_type=source["source_type"],
+                    summary=source["summary"],
+                    title=source["title"],
+                )
+            )
+        lines.append("")
+
+    lines.extend(["## High-Use Computer Sources", ""])
+    for source in bridge["high_use_sources"]:
+        lines.append(
+            "- [{title}]({path}) - lane `{lane}`, type `{source_type}`, project routes `{projects}`, inbound `{inbound}`".format(
+                inbound=source["inbound_count"],
+                lane=source["lane"],
+                path=relative_wiki_link(str(source["path"])),
+                projects=source["project_count"],
+                source_type=source["source_type"],
+                title=source["title"],
+            )
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_computer_source_readme(bridge: dict[str, Any]) -> str:
+    lines = [
+        "# Computer Source Notes",
+        "",
+        "This folder tracks the maintained computer-science reference layer for software shape, storage, performance, numeric robustness, and reusable implementation patterns.",
+        "",
+        f"- maintained_source_notes: `{bridge['source_note_count']}`",
+        f"- project_routes: `{bridge['project_route_count']}`",
+        "",
+        "## Navigation",
+        "",
+        "- [Source-to-Project Bridge Map](source_to_project_bridge_map.md)",
+        "",
+        "## Source Types",
+        "",
+        "| source type | sources |",
+        "|---|---:|",
+    ]
+    for source_type, count in sorted(bridge["source_type_counts"].items()):
+        lines.append(f"| `{table_cell(source_type)}` | {count} |")
+
+    lines.extend(["", "## Shelf Lanes", "", "| lane | sources |", "|---|---:|"])
+    for lane, count in sorted(bridge["lane_counts"].items()):
+        lines.append(f"| `{table_cell(lane)}` | {count} |")
+
+    lines.extend(["", "## Project Routes", "", "| project | sources |", "|---|---:|"])
+    for project in bridge["projects"]:
+        lines.append(f"| [{table_cell(project['label'])}]({relative_wiki_link(str(project['path']))}) | {project['source_count']} |")
+
+    lines.extend(["", "## High-Use Computer Sources", ""])
+    for source in bridge["high_use_sources"][:8]:
+        lines.append(
+            "- [{title}]({path}) - lane `{lane}`, type `{source_type}`, project routes `{projects}`".format(
+                lane=source["lane"],
+                path=relative_wiki_link(str(source["path"])),
+                projects=source["project_count"],
+                source_type=source["source_type"],
+                title=source["title"],
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Maintenance",
+            "",
+            "- This hub is generated from `state/catalog.sqlite` and should be refreshed after source-note or project-link edits.",
+            "- Apply bridge-map bundles to `state/wiki_mirror` first; NAS promotion is a separate reviewed pass.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def computer_project_source_bullet(source: dict[str, Any]) -> str:
+    return "- [{title}]({path}) - route `{route_kind}`, lane `{lane}`, type `{source_type}`, projects `{projects}`. {summary}".format(
+        lane=source["lane"],
+        path=relative_wiki_link(str(source["path"])),
+        projects=source["project_count"],
+        route_kind=source["route_kind"],
+        source_type=source["source_type"],
+        summary=source["summary"],
+        title=source["title"],
+    )
+
+
 def source_route_bullet(source: dict[str, Any]) -> str:
     return "- [{title}]({path}) - lane `{lane}`, inbound `{inbound}`. {summary}".format(
         inbound=source["inbound_count"],
@@ -1008,7 +1405,7 @@ def truncate_words(text: str, limit: int) -> str:
 
 
 def relative_wiki_link(target_path: str) -> str:
-    if target_path.startswith("sources/math/"):
+    if target_path.startswith("sources/math/") or target_path.startswith("sources/computer/"):
         return PurePosixPath(target_path).name
     return f"../../{target_path}"
 
