@@ -1,0 +1,55 @@
+# Exclude rules for the local working mirror in state/wiki_mirror.
+#
+# The NAS remains canonical. The mirror is a fast local read copy for scans,
+# reports, harness runs, and planning work.
+
+# NAS/system noise
+@Recycle/
+@Recently-Snapshot/
+.DS_Store
+.stfolder/
+
+# Repo/runtime noise that is not wiki knowledge
+.git/
+.obsidian/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+site-packages/
+tmp/
+runtime/
+
+# Stock-trading heavy local tooling and runtime data
+/projects/stock_trading/tools/miniforge3/
+/projects/stock_trading/tools/rclone/
+/projects/stock_trading/runtime/
+/projects/stock_trading/data/
+/projects/stock_trading/apps/rudedude/data/
+
+# Stock-trading data/binary payloads
+/projects/stock_trading/**/*.csv
+/projects/stock_trading/**/*.tsv
+/projects/stock_trading/**/*.jsonl
+/projects/stock_trading/**/*.ndjson
+/projects/stock_trading/**/*.parquet
+/projects/stock_trading/**/*.feather
+/projects/stock_trading/**/*.arrow
+/projects/stock_trading/**/*.sqlite
+/projects/stock_trading/**/*.sqlite3
+/projects/stock_trading/**/*.db
+/projects/stock_trading/**/*.duckdb
+/projects/stock_trading/**/*.zip
+/projects/stock_trading/**/*.gz
+/projects/stock_trading/**/*.bz2
+/projects/stock_trading/**/*.xz
+/projects/stock_trading/**/*.7z
+/projects/stock_trading/**/*.tar
+/projects/stock_trading/**/*.tgz
+/projects/stock_trading/**/*.pyc
+/projects/stock_trading/**/*.so
+/projects/stock_trading/**/*.dylib
+/projects/stock_trading/**/*.dll
+/projects/stock_trading/**/*.exe

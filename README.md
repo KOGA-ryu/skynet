@@ -8,6 +8,7 @@ Defaults:
 
 - Mac wiki mount: `/Volumes/wiki`
 - Windows wiki mount: `W:\`
+- Local working mirror: `state/wiki_mirror`
 - Local catalog: `state/catalog.sqlite`
 
 Active build tracker: [ROADMAP_TASKLIST.md](ROADMAP_TASKLIST.md)
@@ -26,6 +27,13 @@ Run a read-only scan:
 
 ```bash
 python3 -m wiki_tool scan --wiki-root /Volumes/wiki
+```
+
+Create or refresh the local working mirror:
+
+```bash
+tools/sync_wiki_mirror.sh
+python3 -m wiki_tool scan --wiki-root state/wiki_mirror --json
 ```
 
 Search the derived catalog:
@@ -118,6 +126,8 @@ Page quality reports:
 Design rules:
 
 - Markdown on the NAS is canonical.
+- `state/wiki_mirror/` is an ignored local read mirror for build work; refresh
+  it from the NAS with `tools/sync_wiki_mirror.sh`.
 - SQLite is a derived read layer.
 - v1 indexes Markdown text and validates links to existing wiki files.
 - Template placeholder links are excluded from actionable broken-link counts.

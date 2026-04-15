@@ -45,6 +45,16 @@ python3 -m wiki_tool audit --json
 python3 -m wiki_tool health --wiki-root /Volumes/wiki --json
 ```
 
+For normal build work, refresh the ignored local mirror once and scan that
+copy. This avoids repeated NAS traversal while keeping the NAS as canonical:
+
+```bash
+cd ~/dev/wiki
+tools/sync_wiki_mirror.sh
+python3 -m wiki_tool scan --wiki-root state/wiki_mirror --json
+python3 -m wiki_tool audit --json
+```
+
 Expected healthy baseline:
 
 - audit status is `pass`
@@ -66,6 +76,8 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method
 
 Ignored local outputs:
 
+- `state/wiki_mirror/`: local working copy of the NAS wiki, excluding heavy
+  generated/data payloads configured in `config/wiki_mirror_excludes.txt`.
 - `state/catalog.sqlite`: derived catalog rebuilt by `scan`.
 - `state/harness.sqlite`: executable harness traces.
 - `state/api_traces.jsonl`: JSON-RPC API request traces.

@@ -14,13 +14,15 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
-- [x] Latest scan run: `scan:20260415T085413Z:0fefcc4701a65cde`.
+- [x] Latest scan run: `scan:20260415T100732Z:f4351838b68707a7`.
 - [x] Latest harness run: `run:20260415T091149Z:897e722f4b59f5ea`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `b7476e9` (`Document patch bundle schema`).
 - [ ] Current active task: add preflight check that refuses writes when catalog
   root and bundle root disagree.
+- [x] Local mirror status: complete, with `state/wiki_mirror/` refreshed from
+  the NAS and heavy stock-trading payloads excluded.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -52,6 +54,7 @@ as tasks move from planned work into implemented, verified tooling.
   `@Recently-Snapshot`, `runtime`, `site-packages`, `node_modules`, and `tmp`.
 - [x] Create first git commit checkpoint for the local tooling repo:
   `6a592ab`.
+- [x] Add guarded local wiki mirror under ignored `state/wiki_mirror/`.
 - [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
   wiki.
 
@@ -239,6 +242,14 @@ Health:
 
 ```bash
 python3 -m wiki_tool health --wiki-root /Volumes/wiki --json
+```
+
+Local mirror:
+
+```bash
+tools/sync_wiki_mirror.sh
+python3 -m wiki_tool scan --wiki-root state/wiki_mirror --json
+python3 -m wiki_tool audit --json
 ```
 
 Harness:
