@@ -18,7 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T090534Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `b949930` (`Add structured harness synthesis adapter`).
+- [x] Latest source checkpoint: `111bafd` (`Add failure taxonomy action engine`).
 - [ ] Current active task: add retrieval fallback chain when the first query misses.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
