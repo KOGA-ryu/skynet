@@ -1,0 +1,7 @@
+{"query":"adapter boundary","expected_hint":"bridge_adapter_boundaries_to_scanner_store_architecture.md"}
+{"query":"scanner evidence","expected_hint":"scanner_evidence_and_snapshot_replay.md"}
+{"query":"market data storage","expected_hint":"market_data_storage_and_query_systems.md"}
+{"query":"library rehydration","expected_hint":"library_rehydration_packet.md"}
+{"query":"NautilusTrader","expected_hint":"nautilustrader"}
+{"query":"VWAP","expected_hint":"market"}
+{"query":"pre-market briefing","expected_hint":"briefing"}

@@ -1,0 +1,462 @@
+from __future__ import annotations
+
+import argparse
+from datetime import UTC, datetime
+import json
+from pathlib import Path
+import sys
+from typing import Any
+
+from wiki_tool.catalog import (
+    DEFAULT_DB,
+    DEFAULT_WIKI_ROOT,
+    audit_summary,
+    broken_link_categories,
+    broken_links,
+    find_references,
+    gaps,
+    get_headings,
+    open_path,
+    query_catalog,
+    scan_wiki,
+)
+from wiki_tool.devrefs import (
+    DEFAULT_CONFIG,
+    DEFAULT_MAC_DEV_ROOT,
+    build_devref_patch_bundle,
+    devref_audit,
+    is_dev_uri,
+    resolve_dev_uri,
+)
+from wiki_tool.file_links import build_file_links_patch_bundle, file_link_audit
+from wiki_tool.harness import (
+    DEFAULT_HARNESS_DB,
+    DEFAULT_SPEC_DIR,
+    get_harness_run,
+    list_harness_runs,
+    run_answer_with_citations,
+    validate_harness_specs,
+)
+from wiki_tool.missing_notes import build_missing_notes_patch_bundle, missing_note_audit
+from wiki_tool.patch_bundle import apply_patch_bundle, validate_patch_bundle
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        payload = args.func(args)
+    except Exception as exc:  # pragma: no cover - CLI boundary
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if payload is not None:
+        print_payload(payload, json_output=args.json)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="wiki", description="Local NAS wiki usability tooling")
+    parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    parser.add_argument("--json", action="store_true", help="emit JSON instead of text")
+    sub = parser.add_subparsers(required=True)
+
+    scan = sub.add_parser("scan", help="scan a Markdown wiki into the local catalog")
+    add_json_flag(scan)
+    scan.add_argument("--wiki-root", type=Path, default=DEFAULT_WIKI_ROOT)
+    scan.set_defaults(func=cmd_scan)
+
+    find = sub.add_parser("find", help="search notes, headings, and symbol seeds")
+    add_json_flag(find)
+    find.add_argument("query")
+    find.add_argument("--limit", type=int, default=10)
+    find.set_defaults(func=cmd_find)
+
+    headings = sub.add_parser("headings", help="list headings for a note")
+    add_json_flag(headings)
+    headings.add_argument("path")
+    headings.set_defaults(func=cmd_headings)
+
+    refs = sub.add_parser("refs", help="find backlinks/references to a note")
+    add_json_flag(refs)
+    refs.add_argument("target")
+    refs.set_defaults(func=cmd_refs)
+
+    broken = sub.add_parser("broken-links", help="list unresolved Markdown/wiki links")
+    add_json_flag(broken)
+    broken.add_argument("--limit", type=int, help="maximum unresolved links to show")
+    broken.add_argument("--category", help="filter by broken-link category")
+    broken.set_defaults(func=cmd_broken_links)
+
+    gap_cmd = sub.add_parser("gaps", help="show catalog gaps")
+    add_json_flag(gap_cmd)
+    gap_cmd.set_defaults(func=cmd_gaps)
+
+    audit = sub.add_parser("audit", help="summarize catalog health")
+    add_json_flag(audit)
+    audit.add_argument("--write", action="store_true", help="write a local audit markdown report")
+    audit.set_defaults(func=cmd_audit)
+
+    open_cmd = sub.add_parser("open", help="translate a catalog identifier to a platform path")
+    add_json_flag(open_cmd)
+    open_cmd.add_argument("identifier")
+    open_cmd.add_argument("--platform", choices=["mac", "windows"], default="mac")
+    open_cmd.add_argument("--mac-root", default="/Volumes/wiki")
+    open_cmd.add_argument("--windows-root", default="W:\\")
+    open_cmd.add_argument("--mac-dev-root")
+    open_cmd.add_argument("--windows-dev-root")
+    open_cmd.add_argument("--devref-config", type=Path, default=DEFAULT_CONFIG)
+    open_cmd.set_defaults(func=cmd_open)
+
+    devrefs = sub.add_parser("devrefs", help="portable dev:// reference helpers")
+    add_json_flag(devrefs)
+    devrefs_sub = devrefs.add_subparsers(required=True)
+    devrefs_audit = devrefs_sub.add_parser("audit", help="summarize local dev paths that can become dev:// refs")
+    add_json_flag(devrefs_audit)
+    devrefs_audit.add_argument("--mac-dev-root", default=DEFAULT_MAC_DEV_ROOT)
+    devrefs_audit.set_defaults(func=cmd_devrefs_audit)
+    devrefs_bundle = devrefs_sub.add_parser("bundle", help="write a patch bundle for dev:// link conversion")
+    add_json_flag(devrefs_bundle)
+    devrefs_bundle.add_argument("--mac-dev-root", default=DEFAULT_MAC_DEV_ROOT)
+    devrefs_bundle.add_argument("--output", type=Path, required=True)
+    devrefs_bundle.set_defaults(func=cmd_devrefs_bundle)
+
+    missing_notes = sub.add_parser("missing-notes", help="missing Markdown note helpers")
+    add_json_flag(missing_notes)
+    missing_notes_sub = missing_notes.add_subparsers(required=True)
+    missing_notes_audit = missing_notes_sub.add_parser("audit", help="summarize missing Markdown note candidates")
+    add_json_flag(missing_notes_audit)
+    missing_notes_audit.add_argument("--limit", type=int)
+    missing_notes_audit.set_defaults(func=cmd_missing_notes_audit)
+    missing_notes_bundle = missing_notes_sub.add_parser("bundle", help="write a patch bundle for missing note stubs")
+    add_json_flag(missing_notes_bundle)
+    missing_notes_bundle.add_argument("--limit", type=int)
+    missing_notes_bundle.add_argument("--output", type=Path, required=True)
+    missing_notes_bundle.set_defaults(func=cmd_missing_notes_bundle)
+
+    file_links = sub.add_parser("file-links", help="non-Markdown file link helpers")
+    add_json_flag(file_links)
+    file_links_sub = file_links.add_subparsers(required=True)
+    file_links_audit = file_links_sub.add_parser("audit", help="summarize non-Markdown file link repairs")
+    add_json_flag(file_links_audit)
+    file_links_audit.add_argument("--mac-dev-root", default=DEFAULT_MAC_DEV_ROOT)
+    file_links_audit.set_defaults(func=cmd_file_links_audit)
+    file_links_bundle = file_links_sub.add_parser("bundle", help="write a patch bundle for file link repairs")
+    add_json_flag(file_links_bundle)
+    file_links_bundle.add_argument("--mac-dev-root", default=DEFAULT_MAC_DEV_ROOT)
+    file_links_bundle.add_argument("--output", type=Path, required=True)
+    file_links_bundle.set_defaults(func=cmd_file_links_bundle)
+
+    explain = sub.add_parser("explain", help="explain the read-guard path for a query")
+    add_json_flag(explain)
+    explain.add_argument("query")
+    explain.add_argument("--limit", type=int, default=5)
+    explain.set_defaults(func=cmd_explain)
+
+    harness = sub.add_parser("harness", help="executable harness helpers")
+    add_json_flag(harness)
+    harness_sub = harness.add_subparsers(required=True)
+    harness_validate = harness_sub.add_parser("validate", help="validate harness Markdown/YAML specs")
+    add_json_flag(harness_validate)
+    harness_validate.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
+    harness_validate.set_defaults(func=cmd_harness_validate)
+    harness_answer = harness_sub.add_parser("answer", help="run the wiki answer-with-citations harness")
+    add_json_flag(harness_answer)
+    harness_answer.add_argument("query")
+    harness_answer.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
+    harness_answer.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    harness_answer.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    harness_answer.set_defaults(func=cmd_harness_answer)
+    harness_runs = harness_sub.add_parser("runs", help="list recent harness runs")
+    add_json_flag(harness_runs)
+    harness_runs.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    harness_runs.add_argument("--limit", type=int, default=10)
+    harness_runs.set_defaults(func=cmd_harness_runs)
+    harness_show = harness_sub.add_parser("show", help="show a harness run trace")
+    add_json_flag(harness_show)
+    harness_show.add_argument("run_id")
+    harness_show.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    harness_show.set_defaults(func=cmd_harness_show)
+
+    patch = sub.add_parser("patch-bundle", help="patch bundle helpers")
+    add_json_flag(patch)
+    patch_sub = patch.add_subparsers(required=True)
+    validate = patch_sub.add_parser("validate", help="validate a patch bundle JSON file")
+    add_json_flag(validate)
+    validate.add_argument("path", type=Path)
+    validate.add_argument("--wiki-root", type=Path)
+    validate.set_defaults(func=cmd_patch_validate)
+    apply_cmd = patch_sub.add_parser("apply", help="apply a validated patch bundle to a wiki root")
+    add_json_flag(apply_cmd)
+    apply_cmd.add_argument("path", type=Path)
+    apply_cmd.add_argument("--wiki-root", type=Path, required=True)
+    apply_cmd.add_argument("--backup-dir", type=Path, default=Path("backups"))
+    apply_cmd.add_argument("--dry-run", action="store_true")
+    apply_cmd.set_defaults(func=cmd_patch_apply)
+
+    return parser
+
+
+def add_json_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+
+
+def cmd_scan(args: argparse.Namespace) -> dict[str, Any]:
+    result = scan_wiki(root=args.wiki_root, db_path=args.db)
+    return {"scan": result.__dict__}
+
+
+def cmd_find(args: argparse.Namespace) -> dict[str, Any]:
+    symbols = query_catalog(args.db, "symbol.search", args.query, args.limit)
+    spans = query_catalog(args.db, "span.searchText", args.query, args.limit)
+    docs = query_catalog(args.db, "document.search", args.query, args.limit)
+    return {"query": args.query, "symbols": symbols, "spans": spans, "documents": docs}
+
+
+def cmd_headings(args: argparse.Namespace) -> dict[str, Any]:
+    return {"path": args.path, "headings": get_headings(args.db, args.path)}
+
+
+def cmd_refs(args: argparse.Namespace) -> dict[str, Any]:
+    return {"target": args.target, "references": find_references(args.db, args.target)}
+
+
+def cmd_broken_links(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "categories": broken_link_categories(args.db),
+        "broken_links": broken_links(args.db, limit=args.limit, category=args.category),
+    }
+
+
+def cmd_gaps(args: argparse.Namespace) -> dict[str, Any]:
+    return gaps(args.db)
+
+
+def cmd_audit(args: argparse.Namespace) -> dict[str, Any]:
+    summary = audit_summary(args.db)
+    if args.write:
+        path = Path("state") / f"audit_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_audit(summary))
+        summary["written_report"] = str(path)
+    return summary
+
+
+def cmd_open(args: argparse.Namespace) -> dict[str, Any]:
+    if is_dev_uri(args.identifier):
+        return resolve_dev_uri(
+            args.identifier,
+            platform=args.platform,
+            mac_root=args.mac_dev_root,
+            windows_root=args.windows_dev_root,
+            config_path=args.devref_config,
+        )
+    return open_path(
+        args.db,
+        args.identifier,
+        platform=args.platform,
+        mac_root=args.mac_root,
+        windows_root=args.windows_root,
+    )
+
+
+def cmd_devrefs_audit(args: argparse.Namespace) -> dict[str, Any]:
+    return devref_audit(args.db, mac_dev_root=args.mac_dev_root)
+
+
+def cmd_devrefs_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    bundle = build_devref_patch_bundle(args.db, mac_dev_root=args.mac_dev_root)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")
+    validation = validate_patch_bundle(args.output)
+    return {
+        "bundle_id": bundle["bundle_id"],
+        "output": str(args.output),
+        "target_count": len(bundle["targets"]),
+        "valid": validation["valid"],
+        "validation_errors": validation["errors"],
+    }
+
+
+def cmd_missing_notes_audit(args: argparse.Namespace) -> dict[str, Any]:
+    return missing_note_audit(args.db, limit=args.limit)
+
+
+def cmd_missing_notes_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    bundle = build_missing_notes_patch_bundle(args.db, limit=args.limit)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")
+    validation = validate_patch_bundle(args.output)
+    return {
+        "bundle_id": bundle["bundle_id"],
+        "output": str(args.output),
+        "target_count": len(bundle["targets"]),
+        "valid": validation["valid"],
+        "validation_errors": validation["errors"],
+    }
+
+
+def cmd_file_links_audit(args: argparse.Namespace) -> dict[str, Any]:
+    return file_link_audit(args.db, mac_dev_root=args.mac_dev_root)
+
+
+def cmd_file_links_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    bundle = build_file_links_patch_bundle(args.db, mac_dev_root=args.mac_dev_root)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")
+    validation = validate_patch_bundle(args.output)
+    return {
+        "bundle_id": bundle["bundle_id"],
+        "output": str(args.output),
+        "skipped_count": len(bundle.get("skipped", [])),
+        "target_count": len(bundle["targets"]),
+        "valid": validation["valid"],
+        "validation_errors": validation["errors"],
+    }
+
+
+def cmd_explain(args: argparse.Namespace) -> dict[str, Any]:
+    symbol_results = query_catalog(args.db, "symbol.search", args.query, args.limit)
+    span_results = query_catalog(args.db, "span.searchText", args.query, args.limit)
+    decision = "symbol-first"
+    if not symbol_results and span_results:
+        decision = "bounded-span-fallback"
+    elif not symbol_results and not span_results:
+        decision = "insufficient-evidence"
+    return {
+        "query": args.query,
+        "policy": {
+            "decision": decision,
+            "steps": [
+                "attempt symbol.search",
+                "if unresolved, attempt span.searchText",
+                "avoid full-file reads unless explicitly authorized",
+            ],
+            "symbol_matches": len(symbol_results),
+            "span_matches": len(span_results),
+        },
+        "symbols": symbol_results,
+        "spans": span_results,
+    }
+
+
+def cmd_harness_validate(args: argparse.Namespace) -> dict[str, Any]:
+    return validate_harness_specs(args.spec_dir)
+
+
+def cmd_harness_answer(args: argparse.Namespace) -> dict[str, Any]:
+    return run_answer_with_citations(
+        args.query,
+        catalog_db=args.catalog_db,
+        harness_db=args.harness_db,
+        spec_dir=args.spec_dir,
+    )
+
+
+def cmd_harness_runs(args: argparse.Namespace) -> dict[str, Any]:
+    return list_harness_runs(args.harness_db, limit=args.limit)
+
+
+def cmd_harness_show(args: argparse.Namespace) -> dict[str, Any]:
+    return get_harness_run(args.run_id, args.harness_db)
+
+
+def cmd_patch_validate(args: argparse.Namespace) -> dict[str, Any]:
+    return validate_patch_bundle(args.path, wiki_root=args.wiki_root)
+
+
+def cmd_patch_apply(args: argparse.Namespace) -> dict[str, Any]:
+    return apply_patch_bundle(
+        args.path,
+        wiki_root=args.wiki_root,
+        backup_dir=args.backup_dir,
+        dry_run=args.dry_run,
+    )
+
+
+def print_payload(payload: Any, *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print(render_text(payload))
+
+
+def render_text(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return str(payload)
+    lines: list[str] = []
+    for key, value in payload.items():
+        lines.append(f"{key}:")
+        lines.extend(indent(render_value(value)))
+    return "\n".join(lines)
+
+
+def render_value(value: Any) -> list[str]:
+    if isinstance(value, list):
+        if not value:
+            return ["  []"]
+        rows = []
+        for item in value:
+            rows.append(f"  - {compact(item)}")
+        return rows
+    if isinstance(value, dict):
+        if not value:
+            return ["  {}"]
+        return [f"  {key}: {compact(val)}" for key, val in value.items()]
+    return [f"  {value}"]
+
+
+def compact(value: Any) -> str:
+    if isinstance(value, dict):
+        preferred = [
+            "path",
+            "title",
+            "name",
+            "heading",
+            "kind",
+            "line",
+            "target_raw",
+            "snippet",
+            "span_id",
+            "symbol_id",
+            "new_target",
+            "old_target",
+            "repo",
+            "count",
+            "candidate_count",
+            "inbound_reference_count",
+            "new_label",
+            "old_label",
+            "repair_kind",
+        ]
+        parts = [f"{key}={value[key]!r}" for key in preferred if key in value]
+        return ", ".join(parts) if parts else json.dumps(value, sort_keys=True)
+    return repr(value)
+
+
+def indent(lines: list[str]) -> list[str]:
+    return [f"  {line}" for line in lines]
+
+
+def render_audit(summary: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "# Wiki Catalog Audit",
+            "",
+            f"- generated_at_utc: `{datetime.now(UTC).isoformat(timespec='seconds')}`",
+            f"- status: `{summary['status']}`",
+            f"- broken_links: `{summary['broken_links']}`",
+            f"- notes_without_headings: `{summary['notes_without_headings']}`",
+            f"- notes_without_inbound_links: `{summary['notes_without_inbound_links']}`",
+            "",
+            "## Counts",
+            "",
+            *[f"- {key}: `{value}`" for key, value in summary.get("counts", {}).items()],
+            "",
+            "## Broken Link Categories",
+            "",
+            *[
+                f"- {item['category']}: `{item['count']}`"
+                for item in summary.get("broken_link_categories", [])
+            ],
+            "",
+        ]
+    )

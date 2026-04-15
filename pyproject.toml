@@ -1,0 +1,9 @@
+[project]
+name = "wiki-usability"
+version = "0.1.0"
+description = "Local-first navigation, audit, and patch-bundle tooling for the NAS wiki."
+requires-python = ">=3.11"
+
+[tool.wiki_usability]
+default_wiki_root = "/Volumes/wiki"
+default_catalog = "state/catalog.sqlite"
