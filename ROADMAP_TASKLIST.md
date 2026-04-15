@@ -18,8 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T080335Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `6a592ab` (`Initial wiki usability tooling
-  checkpoint`).
+- [x] Latest source checkpoint: `d87eac6` (`Add read-layer wiki aliases`).
 - [ ] Current active task: add per-project backlink, orphan, and missing-hub
   reports.
 - [x] Alias map implementation status: complete, with 6 validated source
