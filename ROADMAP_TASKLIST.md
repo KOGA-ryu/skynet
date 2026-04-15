@@ -18,8 +18,11 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T104333Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `df86c79` (`Add broken link regression scoring`).
-- [ ] Current active task: add backup restore docs.
+- [x] Latest source checkpoint: `6c46fb0` (`Add backup restore guide`).
+- [ ] Current active task: add bounded JSON-RPC methods for `harness.run` and
+  `harness.show`.
+- [x] Backup restore docs status: complete; operator restore workflow and
+  rollback blocker meanings are documented in `BACKUP_RESTORE.md`.
 - [x] Broken-link regression status: complete; eval runs now fail when the
   catalog has actionable broken links and continue to exclude template
   placeholders.
@@ -226,22 +229,22 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Create first git commit checkpoint: `6a592ab`.
 - [x] Add install/setup instructions.
 - [x] Add a single smoke-test command.
-- [ ] Add backup restore docs.
+- [x] Add backup restore docs.
 - [ ] Add package entry point if CLI use becomes frequent.
 - [ ] Add release notes for the first usable build.
 
 ## Next 10 Tasks
 
-1. [ ] Add backup restore docs.
-2. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
-3. [ ] Add release notes for the first usable build.
-4. [ ] Build a report of generated stubs that still need human content.
-5. [ ] Add project-level librarian reports.
-6. [ ] Add stale-scan detection when the NAS has changed after the last catalog
+1. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
+2. [ ] Add release notes for the first usable build.
+3. [ ] Build a report of generated stubs that still need human content.
+4. [ ] Add project-level librarian reports.
+5. [ ] Add stale-scan detection when the NAS has changed after the last catalog
    build.
-7. [ ] Compare retrieval profiles before changing search behavior.
-8. [ ] Use eval results to choose cleanup targets instead of relying on memory.
-9. [ ] Add optional scheduled scan/audit runner.
+6. [ ] Compare retrieval profiles before changing search behavior.
+7. [ ] Use eval results to choose cleanup targets instead of relying on memory.
+8. [ ] Add optional scheduled scan/audit runner.
+9. [ ] Add package entry point if CLI use becomes frequent.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -305,6 +308,7 @@ python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 Patch bundles:
 
 Schema: `PATCH_BUNDLE_SCHEMA.md`
+Restore guide: `BACKUP_RESTORE.md`
 
 ```bash
 python3 -m wiki_tool patch-bundle validate <bundle.json> --wiki-root /Volumes/wiki --json
