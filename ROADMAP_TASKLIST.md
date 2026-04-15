@@ -18,8 +18,10 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T102707Z:838b2e4cc6371c4c`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `e6088e0` (`Tighten harness schema validation`).
-- [ ] Current active task: add trace diffing between harness runs.
+- [x] Latest source checkpoint: `badb9b4` (`Add harness trace diffing`).
+- [ ] Current active task: score broken-link regression.
+- [x] Trace diffing status: complete; `harness diff` compares persisted run
+  traces without generating new harness runs.
 - [x] Contract/schema validation status: complete; harness specs and synthesis
   outputs now fail closed against stricter declared schemas.
 - [x] Root preflight implementation status: complete; real applies now require
@@ -150,7 +152,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Add failure-taxonomy action engine for retries and fallback behavior.
 - [x] Add retrieval fallback chain when the first query misses.
 - [x] Tighten contract and schema validation.
-- [ ] Add trace diffing between harness runs.
+- [x] Add trace diffing between harness runs.
 
 ## Phase 5: Retrieval Quality And Evals
 
@@ -227,16 +229,16 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add trace diffing between harness runs.
+1. [ ] Add broken-link regression scoring to eval reports.
 2. [ ] Add backup restore docs.
-3. [ ] Add broken-link regression scoring to eval reports.
-4. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
-5. [ ] Add release notes for the first usable build.
-6. [ ] Build a report of generated stubs that still need human content.
-7. [ ] Add project-level librarian reports.
-8. [ ] Add stale-scan detection when the NAS has changed after the last catalog
+3. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
+4. [ ] Add release notes for the first usable build.
+5. [ ] Build a report of generated stubs that still need human content.
+6. [ ] Add project-level librarian reports.
+7. [ ] Add stale-scan detection when the NAS has changed after the last catalog
    build.
-9. [ ] Compare retrieval profiles before changing search behavior.
+8. [ ] Compare retrieval profiles before changing search behavior.
+9. [ ] Use eval results to choose cleanup targets instead of relying on memory.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -263,6 +265,8 @@ python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic
 python3 -m wiki_tool harness answer "adapter boundary" --synthesis openai --llm-model gpt-5.4-mini --json
 python3 -m wiki_tool harness runs --json
 python3 -m wiki_tool harness show <run_id> --json
+python3 -m wiki_tool harness diff --latest --json
+python3 -m wiki_tool harness diff <base_run_id> <head_run_id> --json
 ```
 
 Eval:
