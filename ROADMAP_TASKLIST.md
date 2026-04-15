@@ -15,11 +15,11 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
 - [x] Latest scan run: `scan:20260415T085413Z:0fefcc4701a65cde`.
-- [x] Latest harness run: `run:20260415T090534Z:4be3b4fc6f51c811`.
+- [x] Latest harness run: `run:20260415T091149Z:897e722f4b59f5ea`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `111bafd` (`Add failure taxonomy action engine`).
-- [ ] Current active task: add retrieval fallback chain when the first query misses.
+- [ ] Current active task: expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -141,7 +141,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Verify current harness run passes.
 - [x] Add structured-output LLM adapter behind the synthesis step.
 - [x] Add failure-taxonomy action engine for retries and fallback behavior.
-- [ ] Add retrieval fallback chain when the first query misses.
+- [x] Add retrieval fallback chain when the first query misses.
 - [ ] Tighten contract and schema validation.
 - [ ] Add trace diffing between harness runs.
 
@@ -220,17 +220,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add retrieval fallback chain when the first query misses.
-2. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
-3. [ ] Build eval runner and recurring retrieval quality report.
-4. [ ] Add the first bounded knowledge API surface.
-5. [ ] Add install/setup instructions.
-6. [ ] Add page quality reports for thin notes, missing summaries, and unclear
+1. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
+2. [ ] Build eval runner and recurring retrieval quality report.
+3. [ ] Add the first bounded knowledge API surface.
+4. [ ] Add install/setup instructions.
+5. [ ] Add page quality reports for thin notes, missing summaries, and unclear
    hub pages.
-7. [ ] Add richer bundle schema docs.
-8. [ ] Add preflight check that refuses writes when catalog root and bundle root
+6. [ ] Add richer bundle schema docs.
+7. [ ] Add preflight check that refuses writes when catalog root and bundle root
    disagree.
-9. [ ] Tighten contract and schema validation.
+8. [ ] Tighten contract and schema validation.
+9. [ ] Add trace diffing between harness runs.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands

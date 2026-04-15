@@ -107,6 +107,8 @@ Design rules:
   synthesis is opt-in with `--synthesis openai` and requires `OPENAI_API_KEY`.
 - Harness failures are mapped through the failure taxonomy, with safe retries
   and deferred remediation actions recorded in run traces.
+- Empty primary retrieval automatically applies a bounded lexical fallback
+  before synthesis.
 - Alias maps are source-controlled read-layer metadata.
 - Project reports are local read-layer outputs unless explicitly promoted
   through a later review workflow.

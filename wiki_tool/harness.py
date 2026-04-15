@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import sqlite3
 import time
-from typing import Any
+from typing import Any, Iterable
 
 from wiki_tool.catalog import DEFAULT_DB, fts_query
 from wiki_tool.ids import digest
@@ -368,6 +368,10 @@ def run_answer_with_citations(
     failures: list[dict[str, Any]] = []
     failure_actions: list[dict[str, Any]] = []
     outputs: dict[str, Any] = {}
+    chunks: list[dict[str, Any]] = []
+    retrieval_fallback_used = False
+    retrieval_fallback_hit_count = 0
+    retrieval_primary_hit_count = 0
     synthesis_metadata: dict[str, Any] = {"model": llm_model, "provider": synthesis}
     status = "running"
 
@@ -382,17 +386,17 @@ def run_answer_with_citations(
 
         retrieval_k = int(contract.get("budgets", {}).get("max_retrieval_k", 8))
         chunks = retrieve_catalog_chunks(catalog_db, plan["search_queries"], k=retrieval_k)
+        retrieval_primary_hit_count = len(chunks)
         retrieval_failure_actions: list[dict[str, Any]] = []
         if not chunks:
-            failures.append(failure("s2_retrieve", "RETRIEVAL_EMPTY", "high", {"query": user_query}))
             retrieval_failure_actions = record_failure_actions(
                 failure_actions,
                 registry,
                 step_id="s2_retrieve",
                 failure_code="RETRIEVAL_EMPTY",
-                status="deferred",
-                reason="Retrieval fallback chain is not implemented in this task.",
-                only_actions={"expand_retrieval", "retry"},
+                status="applied",
+                reason="Primary retrieval returned no chunks; expanding retrieval with fallback queries.",
+                only_actions={"expand_retrieval"},
             )
         trace.record_step(
             "s2_retrieve",
@@ -400,9 +404,50 @@ def run_answer_with_citations(
             tool_name="retriever.search",
             status="ok" if chunks else "failed",
             input_data={"queries": plan["search_queries"], "k": retrieval_k},
-            output={"failure_actions": retrieval_failure_actions, "hit_count": len(chunks)},
+            output={
+                "failure_actions": retrieval_failure_actions,
+                "hit_count": len(chunks),
+                "profile": "catalog.fts_spans.primary",
+            },
             retrieval_candidates=chunks,
         )
+        if not chunks:
+            retrieval_fallback_used = True
+            fallback_queries = build_fallback_search_queries(user_query)
+            fallback_chunks = retrieve_catalog_chunks(
+                catalog_db,
+                fallback_queries,
+                k=retrieval_k,
+                method="catalog_fts_span_fallback",
+            )
+            retrieval_fallback_hit_count = len(fallback_chunks)
+            trace.record_step(
+                "s2b_retrieve_fallback",
+                "tool",
+                tool_name="retriever.search",
+                status="ok" if fallback_chunks else "failed",
+                input_data={"queries": fallback_queries, "k": retrieval_k},
+                output={
+                    "fallback_for": "s2_retrieve",
+                    "hit_count": len(fallback_chunks),
+                    "profile": "catalog.fts_spans.expanded",
+                },
+                retrieval_candidates=fallback_chunks,
+            )
+            chunks = fallback_chunks
+            if not chunks:
+                failures.append(
+                    failure(
+                        "s2b_retrieve_fallback",
+                        "RETRIEVAL_EMPTY",
+                        "high",
+                        {
+                            "fallback_queries": fallback_queries,
+                            "primary_queries": plan["search_queries"],
+                            "query": user_query,
+                        },
+                    )
+                )
 
         adapter = synthesis_adapter or synthesis_adapter_for(synthesis=synthesis, model=llm_model)
         synthesis_attempts: list[dict[str, Any]] = []
@@ -554,7 +599,7 @@ def run_answer_with_citations(
                     step_id="s4_verify_groundedness",
                     failure_code="GROUNDEDNESS_FAIL",
                     status="deferred",
-                    reason="Groundedness repair requires the retrieval fallback chain planned as the next task.",
+                    reason="Groundedness repair requires a post-synthesis retrieval repair loop.",
                     only_actions={"expand_retrieval", "ask_clarifying"},
                 )
         else:
@@ -599,7 +644,10 @@ def run_answer_with_citations(
         metrics = {
             "failure_action_count": len(failure_actions),
             "failure_count": len(failures),
-            "retrieval_hit_count": len(outputs.get("citations", [])),
+            "retrieval_fallback_hit_count": retrieval_fallback_hit_count,
+            "retrieval_fallback_used": retrieval_fallback_used,
+            "retrieval_hit_count": len(chunks),
+            "retrieval_primary_hit_count": retrieval_primary_hit_count,
             "synthesis": synthesis,
             "synthesis_model": synthesis_metadata.get("model"),
             "synthesis_provider": synthesis_metadata.get("provider"),
@@ -1032,7 +1080,13 @@ def init_harness_db(path: Path = DEFAULT_HARNESS_DB) -> None:
         con.commit()
 
 
-def retrieve_catalog_chunks(catalog_db: Path, queries: list[str], *, k: int) -> list[dict[str, Any]]:
+def retrieve_catalog_chunks(
+    catalog_db: Path,
+    queries: list[str],
+    *,
+    k: int,
+    method: str = "catalog_fts_span",
+) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
     with closing(sqlite3.connect(catalog_db)) as con:
         con.row_factory = sqlite3.Row
@@ -1062,7 +1116,7 @@ def retrieve_catalog_chunks(catalog_db: Path, queries: list[str], *, k: int) -> 
                     "chunk_id": row["span_id"],
                     "end_line": row["end_line"],
                     "heading": row["heading"],
-                    "method": "catalog_fts_span",
+                    "method": method,
                     "path": row["path"],
                     "score": score,
                     "start_line": row["start_line"],
@@ -1094,6 +1148,51 @@ def groundedness_check(
 def build_search_queries(user_query: str) -> list[str]:
     query = " ".join(user_query.split())
     return [query] if query else []
+
+
+def build_fallback_search_queries(user_query: str) -> list[str]:
+    tokens = fallback_search_tokens(user_query)
+    if not tokens:
+        return []
+    queries = [" OR ".join(tokens)] if len(tokens) > 1 else []
+    queries.extend(tokens)
+    return dedupe_preserving_order(queries)
+
+
+def fallback_search_tokens(user_query: str) -> list[str]:
+    stopwords = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "for",
+        "how",
+        "is",
+        "me",
+        "no",
+        "of",
+        "or",
+        "the",
+        "to",
+        "what",
+        "when",
+        "where",
+        "why",
+        "with",
+    }
+    tokens = [token for token in re.findall(r"[A-Za-z0-9_./-]+", user_query) if len(token) >= 3]
+    return dedupe_preserving_order(token for token in tokens if token.lower() not in stopwords)
+
+
+def dedupe_preserving_order(items: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
 
 
 def min_citations(contract: dict[str, Any]) -> int:

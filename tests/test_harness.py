@@ -10,6 +10,7 @@ from unittest.mock import patch
 from wiki_tool.catalog import scan_wiki
 from wiki_tool.cli import build_parser
 from wiki_tool.harness import (
+    build_fallback_search_queries,
     extract_yaml_blocks,
     failure_actions_for,
     get_harness_run,
@@ -63,6 +64,12 @@ tools_allowed:
         )
         self.assertEqual([item["action"] for item in actions], ["retry", "abort"])
         self.assertEqual({item["source_failure_code"] for item in actions}, {"OUTPUT_SCHEMA_INVALID"})
+
+    def test_fallback_search_queries_expand_to_or_and_terms(self) -> None:
+        self.assertEqual(
+            build_fallback_search_queries("what retrieves absenttoken retrieval"),
+            ["retrieves OR absenttoken OR retrieval", "retrieves", "absenttoken", "retrieval"],
+        )
 
     def test_answer_harness_persists_trace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -118,11 +125,55 @@ tools_allowed:
                 {"RETRIEVAL_EMPTY", "GROUNDEDNESS_FAIL"},
             )
             self.assertIn(
-                ("RETRIEVAL_EMPTY", "expand_retrieval", "deferred"),
+                ("RETRIEVAL_EMPTY", "expand_retrieval", "applied"),
                 {
                     (item["source_failure_code"], item["action"], item["status"])
                     for item in result["failure_actions"]
                 },
+            )
+            shown = get_harness_run(result["run_id"], harness_db)
+            self.assertEqual(shown["steps"][2]["step_id"], "s2b_retrieve_fallback")
+            self.assertEqual(shown["steps"][2]["status"], "failed")
+            self.assertEqual(shown["run"]["metrics"]["retrieval_fallback_hit_count"], 0)
+
+    def test_answer_harness_uses_retrieval_fallback_after_primary_miss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = Path(tmp) / "catalog.sqlite"
+            harness_db = Path(tmp) / "harness.sqlite"
+            scan_wiki(FIXTURE, catalog_db)
+
+            result = run_answer_with_citations(
+                "retrieval absenttoken",
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                spec_dir=SPEC_DIR,
+            )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["failures"], [])
+            self.assertIn(
+                ("RETRIEVAL_EMPTY", "expand_retrieval", "applied"),
+                {
+                    (item["source_failure_code"], item["action"], item["status"])
+                    for item in result["failure_actions"]
+                },
+            )
+            shown = get_harness_run(result["run_id"], harness_db)
+            self.assertEqual([step["step_id"] for step in shown["steps"]], [
+                "s1_plan",
+                "s2_retrieve",
+                "s2b_retrieve_fallback",
+                "s3_synthesize",
+                "s4_verify_groundedness",
+                "s5_persist",
+            ])
+            self.assertEqual(shown["steps"][1]["status"], "failed")
+            self.assertEqual(shown["steps"][2]["status"], "ok")
+            self.assertTrue(shown["run"]["metrics"]["retrieval_fallback_used"])
+            self.assertGreaterEqual(shown["run"]["metrics"]["retrieval_fallback_hit_count"], 2)
+            self.assertIn(
+                "catalog_fts_span_fallback",
+                {item["method"] for item in shown["retrieval_candidates"]},
             )
 
     def test_answer_harness_accepts_schema_valid_structured_adapter(self) -> None:
