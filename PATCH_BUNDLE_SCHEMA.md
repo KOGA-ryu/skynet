@@ -9,6 +9,7 @@ The implemented bundle system supports these target types:
 - `replace_link_target`
 - `replace_markdown_link`
 - `create_markdown_stub`
+- `create_markdown_file`
 - `replace_text_block`
 - `delete_markdown_file`
 
@@ -67,8 +68,8 @@ Every target must include:
 | `reason` | string | Human-readable reason for this target. |
 
 For replacement targets, `source_path` is the wiki-relative Markdown file that
-will be edited. For stub targets, `path` is the wiki-relative Markdown file that
-will be created.
+will be edited. For create targets, `path` is the wiki-relative Markdown file
+that will be created.
 
 ## `replace_link_target`
 
@@ -188,6 +189,42 @@ Safety behavior:
 - `body` must start with `# {title}`.
 - Validation fails if the target file already exists when `--wiki-root` is supplied.
 - Apply refuses to overwrite an existing file.
+
+## `create_markdown_file`
+
+Use this to create a complete reviewed Markdown file, such as a generated shelf
+bridge map. Unlike `create_markdown_stub`, this target does not require inbound
+references because the file may be a hub or generated map rather than a missing
+note.
+
+Required fields:
+
+| field | type | validation |
+|---|---|---|
+| `body` | string | Full Markdown body for the new file. |
+| `path` | string | Wiki-relative `.md` path to create. |
+| `title` | string | Expected top-level title. |
+
+Example:
+
+```json
+{
+  "body": "# Math Book-to-Concept Bridge Map\n\n## Concept Routes\n\n- ...\n",
+  "path": "sources/math/book_to_concept_bridge_map.md",
+  "reason": "Create generated math source bridge map",
+  "title": "Math Book-to-Concept Bridge Map",
+  "type": "create_markdown_file"
+}
+```
+
+Safety behavior:
+
+- `path` must be wiki-relative and end with `.md`.
+- `path` must not be absolute and must not contain `..`.
+- `body` must start with `# {title}`.
+- Validation fails if the target file already exists when `--wiki-root` is supplied.
+- Apply refuses to overwrite an existing file.
+- Rollback deletes the created file if the current file still matches the applied hash.
 
 ## `replace_text_block`
 

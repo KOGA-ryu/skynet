@@ -73,6 +73,7 @@ python3 -m wiki_tool explain "adapter boundary" --json
 python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic --json
 python3 -m wiki_tool eval run --limit 3 --json
 python3 -m wiki_tool source-shelves summary --json
+python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/source_shelves_math_bridge_map.json --json
 python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method":"symbol.search","params":{"query":"adapter boundary","limit":3}}' --json
 ```
 
@@ -126,6 +127,7 @@ first; use `/Volumes/wiki` only during an explicit promotion pass.
 
 ```bash
 python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
+python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/source_shelves_math_bridge_map.json --json
 python3 -m wiki_tool patch-bundle validate patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --json
 python3 -m wiki_tool patch-bundle report patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --json
 python3 -m wiki_tool patch-bundle apply patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --dry-run --json

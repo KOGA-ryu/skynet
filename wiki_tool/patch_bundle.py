@@ -13,6 +13,7 @@ from wiki_tool.catalog import latest_scan_run
 
 REQUIRED_KEYS = {"bundle_id", "created_at_utc", "targets", "rationale", "backup_manifest"}
 SUPPORTED_TARGET_TYPES = {
+    "create_markdown_file",
     "create_markdown_stub",
     "delete_markdown_file",
     "replace_link_target",
@@ -23,6 +24,10 @@ REPLACEMENT_TARGET_TYPES = {
     "replace_link_target",
     "replace_markdown_link",
     "replace_text_block",
+}
+CREATE_TARGET_TYPES = {
+    "create_markdown_file",
+    "create_markdown_stub",
 }
 
 
@@ -51,6 +56,8 @@ def validate_patch_bundle(path: Path, *, wiki_root: Path | None = None) -> dict[
             validate_replace_markdown_link(index, target, errors, wiki_root=wiki_root)
         elif target.get("type") == "create_markdown_stub":
             validate_create_markdown_stub(index, target, errors, wiki_root=wiki_root)
+        elif target.get("type") == "create_markdown_file":
+            validate_create_markdown_file(index, target, errors, wiki_root=wiki_root)
         elif target.get("type") == "replace_text_block":
             validate_replace_text_block(index, target, errors, wiki_root=wiki_root)
         elif target.get("type") == "delete_markdown_file":
@@ -173,7 +180,7 @@ def apply_patch_bundle(
         manifests.append(file_summary)
 
     for target in sorted(
-        (item for item in targets if item.get("type") == "create_markdown_stub"),
+        (item for item in targets if item.get("type") in CREATE_TARGET_TYPES),
         key=lambda item: item["path"],
     ):
         rel_path = str(target["path"])
@@ -736,6 +743,38 @@ def validate_create_markdown_stub(
     if not isinstance(target["inbound_references"], list) or not target["inbound_references"]:
         errors.append(f"target {index} inbound_references must be a non-empty list")
     if wiki_root is not None and (wiki_root / path).exists():
+        errors.append(f"target {index} path already exists: {path}")
+
+
+def validate_create_markdown_file(
+    index: int,
+    target: dict[str, Any],
+    errors: list[str],
+    *,
+    wiki_root: Path | None,
+) -> None:
+    required = {"body", "path", "title"}
+    missing = sorted(key for key in required if not target.get(key))
+    if missing:
+        errors.append(f"target {index} missing create_markdown_file keys: {', '.join(missing)}")
+        return
+    path = str(target["path"])
+    if not path.endswith(".md"):
+        errors.append(f"target {index} path must end with .md")
+    if path.startswith("/") or ".." in Path(path).parts:
+        errors.append(f"target {index} path must be wiki-relative")
+        return
+    body = str(target["body"])
+    if not body.startswith(f"# {target['title']}"):
+        errors.append(f"target {index} body must start with title heading")
+    if wiki_root is None:
+        return
+    try:
+        source = safe_wiki_target(wiki_root, path)
+    except ValueError as exc:
+        errors.append(f"target {index} {exc}")
+        return
+    if source.exists():
         errors.append(f"target {index} path already exists: {path}")
 
 

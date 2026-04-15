@@ -124,6 +124,49 @@ class PatchBundleReportRollbackTests(unittest.TestCase):
             )
             self.assertEqual(dry_run["actions"][0]["status"], "already_missing")
 
+    def test_create_markdown_file_apply_and_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wiki"
+            root.mkdir()
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(create_file_bundle()))
+
+            applied = apply_patch_bundle(
+                bundle_path,
+                wiki_root=root,
+                backup_dir=Path(tmp) / "backups",
+            )
+
+            created = root / "docs" / "bridge.md"
+            self.assertEqual(created.read_text(), "# Bridge\n\nFinished bridge map.\n")
+            report = report_patch_bundle(Path(applied["manifest_path"]), wiki_root=root)
+            self.assertEqual(report["files"][0]["action"], "create")
+            self.assertEqual(report["files"][0]["status"], "ready")
+            result = rollback_patch_bundle(Path(applied["manifest_path"]), wiki_root=root)
+            self.assertTrue(result["rolled_back"])
+            self.assertFalse(created.exists())
+
+            dry_run = rollback_patch_bundle(
+                Path(applied["manifest_path"]),
+                wiki_root=root,
+                dry_run=True,
+            )
+            self.assertEqual(dry_run["actions"][0]["status"], "already_missing")
+
+    def test_create_markdown_file_refuses_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wiki"
+            note = root / "docs" / "bridge.md"
+            note.parent.mkdir(parents=True)
+            note.write_text("# Bridge\n\nExisting.\n")
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(create_file_bundle()))
+
+            validation = validate_patch_bundle(bundle_path, wiki_root=root)
+
+            self.assertFalse(validation["valid"])
+            self.assertIn("path already exists", validation["errors"][0])
+
     def test_replace_text_block_apply_and_rollback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "wiki"
@@ -442,6 +485,24 @@ def create_bundle() -> dict[str, object]:
                 "reason": "missing note",
                 "title": "Missing",
                 "type": "create_markdown_stub",
+            }
+        ],
+    }
+
+
+def create_file_bundle() -> dict[str, object]:
+    return {
+        "backup_manifest": True,
+        "bundle_id": "bundle:create-file",
+        "created_at_utc": "2026-04-15T00:00:00Z",
+        "rationale": "create complete file test",
+        "targets": [
+            {
+                "body": "# Bridge\n\nFinished bridge map.\n",
+                "path": "docs/bridge.md",
+                "reason": "create finished bridge map",
+                "title": "Bridge",
+                "type": "create_markdown_file",
             }
         ],
     }

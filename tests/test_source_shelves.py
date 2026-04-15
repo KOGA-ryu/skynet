@@ -5,7 +5,9 @@ import unittest
 from wiki_tool.catalog import scan_wiki
 from wiki_tool.cli import build_parser
 from wiki_tool.source_shelves import (
+    build_source_shelf_bridge_bundle,
     build_source_shelf_cleanup_bundle,
+    math_book_concept_bridge_map,
     source_shelf_report,
     source_shelf_summary,
     write_source_shelf_reports,
@@ -72,6 +74,16 @@ class SourceShelfTests(unittest.TestCase):
             self.assertIn("placeholder_artifact", placeholder["quality_flags"])
             self.assertIn("generated_stub", placeholder["quality_flags"])
 
+    def test_source_shelf_report_excludes_generated_bridge_hubs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = build_source_shelf_catalog(tmp, generated_math_bridge=True)
+
+            math = source_shelf_report(db, "math")
+            notes = {item["path"]: item for item in math["notes"]}
+
+            self.assertNotIn("sources/math/book_to_concept_bridge_map.md", notes)
+            self.assertEqual(notes["sources/math/probability_measure.md"]["inbound_count"], 1)
+
     def test_source_shelf_limit_trims_details_without_changing_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = build_source_shelf_catalog(tmp)
@@ -108,6 +120,30 @@ class SourceShelfTests(unittest.TestCase):
             self.assertEqual(target["source_path"], "sources/computer/libqalculate_patterns.md")
             self.assertIn("Why This Source Matters", target["new_text"])
 
+    def test_math_book_concept_bridge_map_skips_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = build_source_shelf_catalog(tmp)
+
+            bridge = math_book_concept_bridge_map(db)
+
+            self.assertEqual(bridge["source_note_count"], 1)
+            self.assertEqual(bridge["concept_count"], 1)
+            self.assertEqual(bridge["concepts"][0]["path"], "concepts/probability.md")
+            self.assertEqual(bridge["concepts"][0]["sources"][0]["title"], "Probability and Measure")
+            self.assertIn("measure-theoretic probability", bridge["concepts"][0]["sources"][0]["summary"])
+
+    def test_source_shelf_bridge_bundle_creates_map_and_refreshes_readme(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = build_source_shelf_catalog(tmp)
+
+            bundle = build_source_shelf_bridge_bundle(db, shelf="math")
+            target_types = {target["path"]: target["type"] for target in bundle["targets"]}
+
+            self.assertEqual(bundle["source_catalog"]["root"], str((Path(tmp) / "wiki").resolve()))
+            self.assertEqual(target_types["sources/math/book_to_concept_bridge_map.md"], "create_markdown_file")
+            self.assertEqual(target_types["sources/math/README.md"], "replace_text_block")
+            self.assertIn("Book-to-Concept Bridge Map", bundle["targets"][0].get("body", "") + bundle["targets"][1].get("new_text", ""))
+
     def test_cli_exposes_source_shelf_commands(self) -> None:
         parser = build_parser()
 
@@ -115,15 +151,17 @@ class SourceShelfTests(unittest.TestCase):
         show_args = parser.parse_args(["source-shelves", "show", "math", "--limit", "3"])
         write_args = parser.parse_args(["source-shelves", "write", "--limit", "4"])
         cleanup_args = parser.parse_args(["source-shelves", "cleanup-bundle", "computer"])
+        bridge_args = parser.parse_args(["source-shelves", "bridge-bundle", "math"])
 
         self.assertEqual(summary_args.func.__name__, "cmd_source_shelves_summary")
         self.assertEqual(show_args.shelf, "math")
         self.assertEqual(show_args.limit, 3)
         self.assertEqual(write_args.limit, 4)
         self.assertEqual(cleanup_args.func.__name__, "cmd_source_shelves_cleanup_bundle")
+        self.assertEqual(bridge_args.func.__name__, "cmd_source_shelves_bridge_bundle")
 
 
-def build_source_shelf_catalog(tmp: str) -> Path:
+def build_source_shelf_catalog(tmp: str, *, generated_math_bridge: bool = False) -> Path:
     root = Path(tmp) / "wiki"
     (root / "concepts").mkdir(parents=True)
     (root / "projects" / "rag_system").mkdir(parents=True)
@@ -163,6 +201,11 @@ def build_source_shelf_catalog(tmp: str) -> Path:
         "- Status: stub\n"
         "- Content has not been filled in yet.\n"
     )
+    if generated_math_bridge:
+        (root / "sources" / "math" / "book_to_concept_bridge_map.md").write_text(
+            "# Math Book-to-Concept Bridge Map\n\n"
+            "- [Probability and Measure](probability_measure.md)\n"
+        )
     (root / "sources" / "computer" / "README.md").write_text(
         "# Computer Source Notes\n\n"
         "Computer shelf.\n\n"

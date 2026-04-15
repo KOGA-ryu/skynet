@@ -14,9 +14,13 @@ from wiki_tool.page_quality import build_page_quality_report
 
 
 DEFAULT_SOURCE_SHELF_CLEANUP_BUNDLE = Path("patch_bundles/source_shelves_computer_cleanup.json")
+DEFAULT_SOURCE_SHELF_BRIDGE_BUNDLE = Path("patch_bundles/source_shelves_math_bridge_map.json")
 DEFAULT_SOURCE_SHELF_REPORT_DIR = Path("state/source_shelf_reports")
 DEFAULT_SOURCE_SHELF_LIMIT = 25
 DEFAULT_SOURCE_SHELVES = ("math", "computer")
+MATH_BRIDGE_MAP_PATH = "sources/math/book_to_concept_bridge_map.md"
+MATH_README_PATH = "sources/math/README.md"
+GENERATED_SOURCE_SHELF_HUBS = {MATH_BRIDGE_MAP_PATH, MATH_README_PATH}
 COMPUTER_SOURCE_SUMMARIES = {
     "sources/computer/audio_shader_studio_patterns.md": (
         "Use this pattern note when a design needs to turn streaming inputs into named rolling "
@@ -96,11 +100,15 @@ def source_shelf_report(
         [
             doc
             for doc in docs
-            if str(doc["path"]).startswith(root) and str(doc["path"]) != hub_path
+            if str(doc["path"]).startswith(root)
+            and str(doc["path"]) != hub_path
+            and str(doc["path"]) not in GENERATED_SOURCE_SHELF_HUBS
         ],
         key=lambda item: str(item["path"]),
     )
-    inbound_by_target = inbound_links_by_target(links)
+    inbound_by_target = inbound_links_by_target(
+        [link for link in links if str(link["source_path"]) not in GENERATED_SOURCE_SHELF_HUBS]
+    )
     outbound_by_source = outbound_links_by_source(links)
     notes = [
         build_source_note_entry(
@@ -243,6 +251,183 @@ def build_source_shelf_cleanup_bundle(
             "scanned_at_utc": scan_run.get("scanned_at_utc"),
         },
         "targets": targets,
+    }
+
+
+def build_source_shelf_bridge_bundle(
+    db_path: Path = DEFAULT_DB,
+    *,
+    shelf: str = "math",
+) -> dict[str, Any]:
+    normalized = normalize_shelf(shelf)
+    if normalized != "math":
+        raise ValueError("source shelf bridge bundles currently support only the math shelf")
+    scan_run = latest_scan_run(db_path)
+    if scan_run is None:
+        raise ValueError(f"no scan run found in {db_path}")
+    wiki_root = Path(str(scan_run["root"]))
+    bridge = math_book_concept_bridge_map(db_path)
+    outputs = [
+        (
+            MATH_BRIDGE_MAP_PATH,
+            "Math Book-to-Concept Bridge Map",
+            render_math_book_concept_bridge_markdown(bridge),
+            "Create generated math book-to-concept bridge map from the local catalog",
+        ),
+        (
+            MATH_README_PATH,
+            "Math Source Notes",
+            render_math_source_readme(bridge),
+            "Refresh math source shelf hub from the current maintained source notes",
+        ),
+    ]
+    targets = [
+        target
+        for target in (
+            create_or_replace_markdown_target(
+                wiki_root,
+                path,
+                title=title,
+                body=body,
+                reason=reason,
+            )
+            for path, title, body, reason in outputs
+        )
+        if target is not None
+    ]
+    if not targets:
+        raise ValueError("no math source shelf bridge targets found")
+
+    return {
+        "backup_manifest": {
+            "required_before_apply": True,
+            "status": "not_created",
+        },
+        "bundle_id": f"bundle:source-shelves:math-bridge-map:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
+        "created_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "rationale": "Create local math source shelf bridge maps that route concepts to useful books.",
+        "source_catalog": {
+            "db_path": str(db_path),
+            "root": str(scan_run["root"]),
+            "run_id": scan_run.get("run_id"),
+            "scanned_at_utc": scan_run.get("scanned_at_utc"),
+        },
+        "targets": targets,
+    }
+
+
+def math_book_concept_bridge_map(db_path: Path = DEFAULT_DB) -> dict[str, Any]:
+    report = source_shelf_report(db_path, "math", limit=1000)
+    docs, _links, _headings = load_source_shelf_rows(db_path)
+    text_by_path = {str(doc["path"]): str(doc["text"]) for doc in docs}
+    sources = [
+        source_bridge_entry(note, text_by_path.get(str(note["path"]), ""))
+        for note in report["notes"]
+        if note["source_type"] != "placeholder"
+    ]
+    concepts_by_path: dict[str, dict[str, Any]] = {}
+    lanes_by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for source in sources:
+        lanes_by_name[str(source["lane"])].append(source)
+        seen_concepts: set[str] = set()
+        for link in source["concept_links"]:
+            concept_path = str(link["path"])
+            if concept_path in seen_concepts:
+                continue
+            seen_concepts.add(concept_path)
+            concept = concepts_by_path.setdefault(
+                concept_path,
+                {
+                    "label": str(link["label"]),
+                    "path": concept_path,
+                    "sources": [],
+                },
+            )
+            concept["sources"].append(source)
+
+    concepts = sorted(
+        (
+            {
+                **concept,
+                "source_count": len(concept["sources"]),
+                "sources": sorted(
+                    concept["sources"],
+                    key=lambda item: (-int(item["inbound_count"]), str(item["path"])),
+                ),
+            }
+            for concept in concepts_by_path.values()
+        ),
+        key=lambda item: (str(item["label"]).lower(), str(item["path"])),
+    )
+    lanes = [
+        {
+            "lane": lane,
+            "source_count": len(items),
+            "sources": sorted(items, key=lambda item: (-int(item["inbound_count"]), str(item["path"]))),
+        }
+        for lane, items in sorted(lanes_by_name.items())
+    ]
+    high_use_sources = sorted(sources, key=lambda item: (-int(item["inbound_count"]), str(item["path"])))[:10]
+
+    return {
+        "catalog_db": str(db_path),
+        "concept_count": len(concepts),
+        "concepts": concepts,
+        "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "high_use_sources": high_use_sources,
+        "lane_counts": {lane["lane"]: lane["source_count"] for lane in lanes},
+        "lanes": lanes,
+        "source_note_count": len(sources),
+        "shelf": "math",
+    }
+
+
+def source_bridge_entry(note: dict[str, Any], text: str) -> dict[str, Any]:
+    concept_links = [
+        dict(link)
+        for link in note["concept_project_links"]
+        if str(link["path"]).startswith("concepts/")
+    ]
+    return {
+        "concept_links": concept_links,
+        "document_id": note["document_id"],
+        "inbound_count": note["inbound_count"],
+        "lane": note["lane"],
+        "path": note["path"],
+        "source_type": note["source_type"],
+        "summary": source_summary_text(text),
+        "title": note["title"],
+    }
+
+
+def create_or_replace_markdown_target(
+    wiki_root: Path,
+    path: str,
+    *,
+    title: str,
+    body: str,
+    reason: str,
+) -> dict[str, Any] | None:
+    source = wiki_root / path
+    if not source.exists():
+        return {
+            "body": body,
+            "path": path,
+            "reason": reason,
+            "title": title,
+            "type": "create_markdown_file",
+        }
+    old_text = source.read_bytes().decode("utf-8", errors="surrogateescape")
+    if old_text == body:
+        return None
+    return {
+        "new_text": body,
+        "old_text": old_text,
+        "path": path,
+        "reason": reason,
+        "source_path": path,
+        "type": "replace_text_block",
     }
 
 
@@ -520,26 +705,31 @@ def has_source_summary(text: str) -> bool:
 
 
 def classify_lane(shelf: str, path: str, title: str, links: list[dict[str, Any]]) -> str:
-    haystack = " ".join([path, title, *[item["path"] for item in links]]).lower()
     if shelf == "math":
-        return classify_math_lane(haystack)
+        primary = " ".join([path, title]).lower()
+        secondary = " ".join(item["path"] for item in links).lower()
+        return classify_math_lane(primary, secondary)
+    haystack = " ".join([path, title, *[item["path"] for item in links]]).lower()
     return classify_computer_lane(haystack)
 
 
-def classify_math_lane(haystack: str) -> str:
+def classify_math_lane(primary: str, secondary: str = "") -> str:
     rules = [
         ("heavy_tails", ("heavy", "tail", "resnick")),
+        ("quantum_operator_methods", ("quantum", "operator", "beyer")),
+        ("geometry_manifolds", ("manifold", "riemannian", "geometry", "petersen", "jost")),
         ("stochastic_processes", ("stochastic", "brownian", "sde", "karatzas", "oksendal")),
         ("probability_measure", ("probability", "measure", "billingsley", "durrett", "kallenberg")),
         ("functional_analysis", ("functional", "sobolev", "banach", "hilbert", "brezis", "conway", "lax")),
-        ("geometry_manifolds", ("manifold", "riemannian", "geometry", "petersen", "jost")),
-        ("spectral_numerical_methods", ("spectral", "chebyshev", "fourier")),
-        ("numerical_linear_algebra", ("matrix", "linear_algebra", "linear algebra", "golub", "trefethen", "meckes")),
         ("differential_equations_applied_math", ("differential", "equation", "applied", "pde", "evans", "strang")),
-        ("algebra", ("algebra", "jacobson")),
-        ("quantum_operator_methods", ("quantum", "operator", "beyer")),
+        ("spectral_numerical_methods", ("spectral", "chebyshev", "fourier")),
+        ("numerical_linear_algebra", ("matrix", "linear_algebra", "linear algebra", "golub", "meckes", "numerical")),
+        ("algebra", ("basic_algebra", "basic algebra", "jacobson")),
     ]
-    return first_matching_lane(haystack, rules, default="math_general")
+    primary_lane = first_matching_lane(primary, rules, default="")
+    if primary_lane:
+        return primary_lane
+    return first_matching_lane(secondary, rules, default="math_general")
 
 
 def classify_computer_lane(haystack: str) -> str:
@@ -660,6 +850,171 @@ def normalize_shelf(value: str) -> str:
     if len(parts) >= 2 and parts[0] == "sources":
         return parts[1]
     return value.strip().strip("/")
+
+
+def render_math_book_concept_bridge_markdown(bridge: dict[str, Any]) -> str:
+    lines = [
+        "# Math Book-to-Concept Bridge Map",
+        "",
+        f"- source_note_count: `{bridge['source_note_count']}`",
+        f"- concept_count: `{bridge['concept_count']}`",
+        "",
+        "## How To Use This Map",
+        "",
+        "- Start with a concept route when you need the strongest books for a mathematical idea.",
+        "- Use lane routes when you need a shelf section instead of a single concept.",
+        "- Regenerate this map after source-note edits so the hub stays aligned with the catalog.",
+        "",
+        "## Concept Routes",
+        "",
+    ]
+    if not bridge["concepts"]:
+        lines.extend(["- none", ""])
+    for concept in bridge["concepts"]:
+        lines.extend(
+            [
+                f"### [{concept['label']}]({relative_wiki_link(str(concept['path']))})",
+                "",
+            ]
+        )
+        for source in concept["sources"]:
+            lines.append(source_route_bullet(source))
+        lines.append("")
+
+    lines.extend(["## Lane Routes", ""])
+    for lane in bridge["lanes"]:
+        lines.extend([f"### `{lane['lane']}`", ""])
+        for source in lane["sources"]:
+            concept_links = ", ".join(
+                f"[{link['label']}]({relative_wiki_link(str(link['path']))})"
+                for link in source["concept_links"]
+            )
+            if not concept_links:
+                concept_links = "none"
+            lines.append(
+                "- [{title}]({path}) - inbound `{inbound}`, concepts: {concepts}. {summary}".format(
+                    concepts=concept_links,
+                    inbound=source["inbound_count"],
+                    path=relative_wiki_link(str(source["path"])),
+                    summary=source["summary"],
+                    title=source["title"],
+                )
+            )
+        lines.append("")
+
+    lines.extend(["## High-Use Math Sources", ""])
+    for source in bridge["high_use_sources"]:
+        lines.append(source_route_bullet(source))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_math_source_readme(bridge: dict[str, Any]) -> str:
+    lines = [
+        "# Math Source Notes",
+        "",
+        "This folder tracks the maintained math reference layer for the private wiki.",
+        "",
+        f"- maintained_source_notes: `{bridge['source_note_count']}`",
+        f"- concept_routes: `{bridge['concept_count']}`",
+        "",
+        "## Navigation",
+        "",
+        "- [Book-to-Concept Bridge Map](book_to_concept_bridge_map.md)",
+        "",
+        "## Shelf Lanes",
+        "",
+        "| lane | sources |",
+        "|---|---:|",
+    ]
+    for lane, count in sorted(bridge["lane_counts"].items()):
+        lines.append(f"| `{table_cell(lane)}` | {count} |")
+
+    lines.extend(["", "## Concept Routes", "", "| concept | sources |", "|---|---:|"])
+    for concept in bridge["concepts"]:
+        lines.append(f"| [{table_cell(concept['label'])}]({relative_wiki_link(str(concept['path']))}) | {concept['source_count']} |")
+
+    lines.extend(["", "## High-Use Math Sources", ""])
+    for source in bridge["high_use_sources"][:8]:
+        lines.append(
+            "- [{title}]({path}) - lane `{lane}`, inbound `{inbound}`".format(
+                inbound=source["inbound_count"],
+                lane=source["lane"],
+                path=relative_wiki_link(str(source["path"])),
+                title=source["title"],
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Maintenance",
+            "",
+            "- This hub is generated from `state/catalog.sqlite` and should be refreshed after source-note edits.",
+            "- Apply bridge-map bundles to `state/wiki_mirror` first; NAS promotion is a separate reviewed pass.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def source_route_bullet(source: dict[str, Any]) -> str:
+    return "- [{title}]({path}) - lane `{lane}`, inbound `{inbound}`. {summary}".format(
+        inbound=source["inbound_count"],
+        lane=source["lane"],
+        path=relative_wiki_link(str(source["path"])),
+        summary=source["summary"],
+        title=source["title"],
+    )
+
+
+def source_summary_text(text: str) -> str:
+    match = re.search(
+        r"^## Why This Source Matters\s*\n+(?P<body>.*?)(?:\n## |\Z)",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if match:
+        summary = clean_markdown_summary(match.group("body"))
+        if summary:
+            return truncate_words(summary, 36)
+    for block in text.split("\n\n"):
+        summary = clean_markdown_summary(block)
+        if summary and len(summary.split()) >= 8:
+            return truncate_words(summary, 36)
+    return "No source summary is available yet."
+
+
+def clean_markdown_summary(markdown: str) -> str:
+    lines: list[str] = []
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if re.match(r"^- [A-Za-z0-9_ -]+:\s*`", line):
+            continue
+        line = re.sub(r"^\s*[-*]\s+", "", line)
+        line = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line)
+        line = re.sub(r"`([^`]+)`", r"\1", line)
+        lines.append(line)
+    return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+
+def truncate_words(text: str, limit: int) -> str:
+    words = text.split()
+    if len(words) <= limit:
+        return text
+    return " ".join(words[:limit]).rstrip(".,;:") + "..."
+
+
+def relative_wiki_link(target_path: str) -> str:
+    if target_path.startswith("sources/math/"):
+        return PurePosixPath(target_path).name
+    return f"../../{target_path}"
+
+
+def table_cell(value: Any) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ")
 
 
 def render_source_shelf_summary_markdown(summary: dict[str, Any]) -> str:

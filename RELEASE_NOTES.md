@@ -118,6 +118,7 @@ python3 -m wiki_tool source-shelves show math --json
 python3 -m wiki_tool source-shelves show computer --json
 python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --json
 python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
+python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/source_shelves_math_bridge_map.json --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 ```
@@ -139,8 +140,10 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method
   systemd timer is still deferred until the review cadence is chosen.
 - Generated stub pages still need a promotion queue after the focused
   human-content report.
-- Math and computer-science source notes still need editorial cleanup and bridge
-  maps after the local source shelf queue is reviewed.
+- Computer-science source notes still need a project bridge map after the local
+  source shelf queue is reviewed.
+- Math source notes now have a generated book-to-concept bridge bundle for
+  local-mirror staging.
 - Recurring editorial review cadence remains a next-stage editorial operation.
 
 ## Verification For This Checkpoint

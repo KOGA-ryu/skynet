@@ -70,6 +70,7 @@ python3 -m wiki_tool source-shelves show math --json
 python3 -m wiki_tool source-shelves show computer --json
 python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --json
 python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
+python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/source_shelves_math_bridge_map.json --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality thin --json
 python3 -m wiki_tool page-quality missing-summaries --json
@@ -159,6 +160,10 @@ Source shelf reports:
 - `source-shelves cleanup-bundle computer` writes a reviewable local patch
   bundle for computer-shelf cleanup. Apply it to `state/wiki_mirror` first;
   NAS promotion is a separate reviewed bundle pass.
+- `source-shelves bridge-bundle math` writes a reviewable local patch bundle
+  that creates `sources/math/book_to_concept_bridge_map.md` and refreshes the
+  math shelf hub from the current catalog. Apply it to `state/wiki_mirror`
+  first; NAS promotion is a separate reviewed bundle pass.
 
 Page quality reports:
 
