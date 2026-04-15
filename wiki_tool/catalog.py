@@ -50,7 +50,8 @@ def scan_wiki(
     db_path.parent.mkdir(parents=True, exist_ok=True)
     docs = collect_documents(root)
     known_paths = {doc.path for doc in docs}
-    known_targets = known_paths | collect_known_files(root)
+    known_files = collect_known_files(root)
+    known_targets = known_paths | known_files
     title_to_path = {normalize_name(doc.title): doc.path for doc in docs}
     alias_entries = load_alias_entries(alias_map_path) if alias_map_path else []
     alias_validation = validate_alias_entries(
@@ -103,6 +104,7 @@ def scan_wiki(
         links=links,
         symbols=symbols,
         aliases=catalog_aliases,
+        known_files=known_targets,
     )
     return ScanResult(
         root=str(root),
@@ -210,6 +212,7 @@ def write_catalog(
     links: list[Link],
     symbols: list[Symbol],
     aliases: list[CatalogAlias],
+    known_files: set[str],
 ) -> None:
     with closing(sqlite3.connect(db_path)) as con:
         con.execute("PRAGMA journal_mode=WAL")
@@ -222,6 +225,7 @@ def write_catalog(
             DELETE FROM links;
             DELETE FROM symbols;
             DELETE FROM aliases;
+            DELETE FROM files;
             DELETE FROM documents_fts;
             DELETE FROM spans_fts;
             DELETE FROM symbols_fts;
@@ -282,6 +286,13 @@ def write_catalog(
             VALUES (:alias, :normalized, :target_path, :reason)
             """,
             [asdict(alias) for alias in aliases],
+        )
+        con.executemany(
+            """
+            INSERT INTO files(path, is_markdown)
+            VALUES (?, ?)
+            """,
+            [(path, int(path.endswith(".md"))) for path in sorted(known_files)],
         )
         con.executemany(
             "INSERT INTO documents_fts(doc_id, title, path, content) VALUES (?, ?, ?, ?)",
@@ -359,6 +370,10 @@ def create_schema(con: sqlite3.Connection) -> None:
             normalized TEXT NOT NULL UNIQUE,
             target_path TEXT NOT NULL,
             reason TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS files (
+            path TEXT PRIMARY KEY,
+            is_markdown INTEGER NOT NULL
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
             doc_id UNINDEXED, title, path, content
@@ -476,6 +491,188 @@ def latest_scan_run(db_path: Path) -> dict[str, Any] | None:
             return None
         row = con.execute("SELECT * FROM scan_runs LIMIT 1").fetchone()
         return dict(row) if row else None
+
+
+def scan_freshness(
+    db_path: Path,
+    *,
+    root: Path | None = None,
+    limit: int = 25,
+) -> dict[str, Any]:
+    if limit < 0:
+        raise ValueError("limit must be greater than or equal to 0")
+    run = latest_scan_run(db_path)
+    if run is None:
+        return stale_scan_result(
+            status="fail",
+            stale=True,
+            reason="missing_scan_run",
+            limit=limit,
+        )
+
+    checked_root = (root if root is not None else Path(str(run["root"]))).expanduser()
+    if not checked_root.exists():
+        return stale_scan_result(
+            status="fail",
+            stale=True,
+            reason="root_missing",
+            run=run,
+            checked_root=checked_root,
+            limit=limit,
+        )
+    if not checked_root.is_dir():
+        return stale_scan_result(
+            status="fail",
+            stale=True,
+            reason="root_not_directory",
+            run=run,
+            checked_root=checked_root,
+            limit=limit,
+        )
+
+    checked_root = checked_root.resolve()
+    catalog_docs, catalog_file_paths, file_inventory_available = catalog_freshness_inputs(db_path)
+    current_docs = {doc.path: doc for doc in collect_documents(checked_root)}
+    current_file_paths = collect_known_files(checked_root) if file_inventory_available else set(current_docs)
+
+    catalog_doc_paths = set(catalog_docs)
+    current_doc_paths = set(current_docs)
+    catalog_non_doc_files = catalog_file_paths - catalog_doc_paths
+    current_non_doc_files = current_file_paths - current_doc_paths
+
+    added_document_paths = sorted(current_doc_paths - catalog_doc_paths)
+    removed_document_paths = sorted(catalog_doc_paths - current_doc_paths)
+    modified_document_paths = sorted(
+        path
+        for path in catalog_doc_paths & current_doc_paths
+        if catalog_docs[path]["content_hash"] != current_docs[path].content_hash
+    )
+    added_file_paths = sorted(current_non_doc_files - catalog_non_doc_files)
+    removed_file_paths = sorted(catalog_non_doc_files - current_non_doc_files)
+
+    stale = bool(
+        added_document_paths
+        or removed_document_paths
+        or modified_document_paths
+        or added_file_paths
+        or removed_file_paths
+    )
+    return {
+        "added_document_count": len(added_document_paths),
+        "added_documents": limit_items(
+            [document_item_from_doc(current_docs[path]) for path in added_document_paths],
+            limit,
+        ),
+        "added_file_count": len(added_file_paths),
+        "added_files": limit_items([{"path": path} for path in added_file_paths], limit),
+        "catalog_document_count": len(catalog_doc_paths),
+        "catalog_file_count": len(catalog_file_paths) if file_inventory_available else None,
+        "catalog_root": str(run["root"]),
+        "checked_root": str(checked_root),
+        "current_document_count": len(current_doc_paths),
+        "current_file_count": len(current_file_paths) if file_inventory_available else None,
+        "file_inventory_available": file_inventory_available,
+        "limit": limit,
+        "modified_document_count": len(modified_document_paths),
+        "modified_documents": limit_items(
+            [
+                {
+                    "new_hash": current_docs[path].content_hash,
+                    "old_hash": str(catalog_docs[path]["content_hash"]),
+                    "path": path,
+                    "title": current_docs[path].title,
+                }
+                for path in modified_document_paths
+            ],
+            limit,
+        ),
+        "reason": "source_changed_since_scan" if stale else "catalog_matches_checked_root",
+        "removed_document_count": len(removed_document_paths),
+        "removed_documents": limit_items(
+            [document_item_from_row(catalog_docs[path]) for path in removed_document_paths],
+            limit,
+        ),
+        "removed_file_count": len(removed_file_paths),
+        "removed_files": limit_items([{"path": path} for path in removed_file_paths], limit),
+        "root_matches_catalog_root": paths_same_file(checked_root, Path(str(run["root"]))),
+        "scan_run_id": run["run_id"],
+        "scanned_at_utc": run["scanned_at_utc"],
+        "stale": stale,
+        "status": "fail" if stale else "pass",
+    }
+
+
+def stale_scan_result(
+    *,
+    status: str,
+    stale: bool,
+    reason: str,
+    limit: int,
+    run: dict[str, Any] | None = None,
+    checked_root: Path | None = None,
+) -> dict[str, Any]:
+    return {
+        "added_document_count": 0,
+        "added_documents": [],
+        "added_file_count": 0,
+        "added_files": [],
+        "catalog_document_count": None,
+        "catalog_file_count": None,
+        "catalog_root": str(run["root"]) if run else None,
+        "checked_root": str(checked_root) if checked_root else None,
+        "current_document_count": None,
+        "current_file_count": None,
+        "file_inventory_available": False,
+        "limit": limit,
+        "modified_document_count": 0,
+        "modified_documents": [],
+        "reason": reason,
+        "removed_document_count": 0,
+        "removed_documents": [],
+        "removed_file_count": 0,
+        "removed_files": [],
+        "root_matches_catalog_root": None,
+        "scan_run_id": run["run_id"] if run else None,
+        "scanned_at_utc": run["scanned_at_utc"] if run else None,
+        "stale": stale,
+        "status": status,
+    }
+
+
+def catalog_freshness_inputs(db_path: Path) -> tuple[dict[str, dict[str, Any]], set[str], bool]:
+    with closing(sqlite3.connect(db_path)) as con:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT path, title, content_hash, byte_size, modified_ns
+            FROM documents
+            ORDER BY path
+            """
+        ).fetchall()
+        docs = {str(row["path"]): dict(row) for row in rows}
+        if table_exists(con, "files"):
+            file_rows = con.execute("SELECT path FROM files ORDER BY path").fetchall()
+            return docs, {str(row["path"]) for row in file_rows}, True
+        return docs, set(docs), False
+
+
+def document_item_from_doc(doc: Document) -> dict[str, Any]:
+    return {"path": doc.path, "title": doc.title}
+
+
+def document_item_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {"path": str(row["path"]), "title": str(row["title"])}
+
+
+def limit_items(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    return items[:limit]
+
+
+def paths_same_file(left: Path, right: Path) -> bool:
+    try:
+        return left.samefile(right)
+    except OSError:
+        return left.resolve() == right.expanduser().resolve()
 
 
 def resolve_alias_path(db_path: Path, value: str) -> str | None:
@@ -667,10 +864,16 @@ def open_path(
     return {"path": f"{root}/{rel}", "relative_path": rel}
 
 
-def audit_summary(db_path: Path) -> dict[str, Any]:
+def audit_summary(
+    db_path: Path,
+    *,
+    freshness_root: Path | None = None,
+    freshness_limit: int = 25,
+) -> dict[str, Any]:
     broken = broken_links(db_path)
     actionable_broken = [row for row in broken if row["category"] != "template_placeholder"]
     gap_data = gaps(db_path)
+    freshness = scan_freshness(db_path, root=freshness_root, limit=freshness_limit)
     with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         run = con.execute("SELECT * FROM scan_runs LIMIT 1").fetchone()
@@ -691,7 +894,8 @@ def audit_summary(db_path: Path) -> dict[str, Any]:
         "excluded_links": len(broken) - len(actionable_broken),
         "notes_without_headings": len(gap_data["notes_without_headings"]),
         "notes_without_inbound_links": len(gap_data["notes_without_inbound_links"]),
-        "status": "fail" if actionable_broken else "pass",
+        "scan_freshness": freshness,
+        "status": "fail" if actionable_broken or freshness["status"] != "pass" else "pass",
     }
 
 

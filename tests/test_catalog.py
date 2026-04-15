@@ -2,7 +2,15 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from wiki_tool.catalog import audit_summary, broken_links, find_references, get_headings, query_catalog, scan_wiki
+from wiki_tool.catalog import (
+    audit_summary,
+    broken_links,
+    find_references,
+    get_headings,
+    query_catalog,
+    scan_freshness,
+    scan_wiki,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_wiki"
@@ -59,6 +67,72 @@ class CatalogTests(unittest.TestCase):
             summary = audit_summary(db)
             self.assertEqual(summary["broken_links"], 0)
             self.assertEqual(summary["excluded_links"], 1)
+
+    def test_scan_freshness_passes_after_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wiki"
+            root.mkdir()
+            (root / "index.md").write_text("# Home\n\nStable catalog.\n")
+            db = Path(tmp) / "catalog.sqlite"
+
+            scan_wiki(root, db)
+            freshness = scan_freshness(db)
+            summary = audit_summary(db)
+
+            self.assertEqual(freshness["status"], "pass")
+            self.assertFalse(freshness["stale"])
+            self.assertEqual(freshness["reason"], "catalog_matches_checked_root")
+            self.assertEqual(summary["scan_freshness"]["status"], "pass")
+            self.assertEqual(summary["status"], "pass")
+
+    def test_scan_freshness_detects_added_modified_and_removed_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wiki"
+            root.mkdir()
+            (root / "index.md").write_text("# Home\n\nOriginal catalog.\n")
+            (root / "removed.md").write_text("# Removed\n\nThis note will be removed.\n")
+            (root / "asset.txt").write_text("original asset\n")
+            db = Path(tmp) / "catalog.sqlite"
+            scan_wiki(root, db)
+
+            (root / "index.md").write_text("# Home\n\nChanged catalog.\n")
+            (root / "removed.md").unlink()
+            (root / "added.md").write_text("# Added\n\nNew note.\n")
+            (root / "new_asset.txt").write_text("new asset\n")
+            (root / "asset.txt").unlink()
+
+            freshness = scan_freshness(db)
+            summary = audit_summary(db)
+
+            self.assertEqual(freshness["status"], "fail")
+            self.assertTrue(freshness["stale"])
+            self.assertEqual(freshness["reason"], "source_changed_since_scan")
+            self.assertEqual(freshness["added_document_count"], 1)
+            self.assertEqual(freshness["modified_document_count"], 1)
+            self.assertEqual(freshness["removed_document_count"], 1)
+            self.assertEqual(freshness["added_file_count"], 1)
+            self.assertEqual(freshness["removed_file_count"], 1)
+            self.assertEqual(summary["status"], "fail")
+
+    def test_scan_freshness_can_compare_an_override_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mirror = Path(tmp) / "mirror"
+            nas = Path(tmp) / "nas"
+            mirror.mkdir()
+            nas.mkdir()
+            (mirror / "index.md").write_text("# Home\n\nSame content.\n")
+            (nas / "index.md").write_text("# Home\n\nSame content.\n")
+            db = Path(tmp) / "catalog.sqlite"
+            scan_wiki(mirror, db)
+
+            freshness = scan_freshness(db, root=nas)
+            self.assertEqual(freshness["status"], "pass")
+            self.assertFalse(freshness["root_matches_catalog_root"])
+
+            (nas / "index.md").write_text("# Home\n\nNAS moved ahead.\n")
+            stale = scan_freshness(db, root=nas)
+            self.assertEqual(stale["status"], "fail")
+            self.assertEqual(stale["modified_document_count"], 1)
 
 
 if __name__ == "__main__":

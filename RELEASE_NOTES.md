@@ -14,7 +14,7 @@ APIs.
 - Excluded template placeholder links: 34.
 - Current catalog size: 845 documents, 4,258 links, 6,659 spans, and 7,482
   symbols.
-- Latest known scan: `scan:20260415T102707Z:f4351838b68707a7`.
+- Latest known scan: `scan:20260415T112457Z:f4351838b68707a7`.
 - Latest known harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - Local mirror support is in place under ignored `state/wiki_mirror/`, with
   heavy stock-trading payloads excluded by `config/wiki_mirror_excludes.txt`.
@@ -24,6 +24,9 @@ APIs.
 - Read-only catalog builds from `/Volumes/wiki` or `state/wiki_mirror`.
 - Full local health checks cover scan, audit, harness validation, and unit
   tests.
+- Scan freshness checks compare the catalog against the current wiki root and
+  fail audit output when Markdown documents or tracked file paths have moved
+  ahead of the latest scan.
 - Search/navigation commands can find documents, headings, references, symbols,
   explanations, project reports, and page-quality queues.
 - Project reports include librarian-priority counts for generated stubs,
@@ -67,6 +70,7 @@ Refresh the local mirror and rebuild the derived catalog:
 ```bash
 tools/sync_wiki_mirror.sh
 python3 -m wiki_tool scan --wiki-root state/wiki_mirror --json
+python3 -m wiki_tool scan-status --json
 python3 -m wiki_tool audit --json
 ```
 
@@ -106,8 +110,7 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method
   final.
 - Linux path support and future PC `dev://` verification should be implemented
   only after that environment is known.
-- Stale-scan detection, scheduled audits, and retrieval-profile comparison are
-  still pending.
+- Scheduled audits and retrieval-profile comparison are still pending.
 - Generated stub pages still need a promotion queue after the focused
   human-content report.
 - Recurring editorial review cadence remains a next-stage editorial operation.

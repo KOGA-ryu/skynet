@@ -94,6 +94,14 @@ class HealthTests(unittest.TestCase):
         help_text = build_parser().format_help()
         self.assertIn("health", help_text)
 
+    def test_cli_accepts_scan_status_command(self) -> None:
+        parser = build_parser()
+
+        args = parser.parse_args(["scan-status", "--wiki-root", "/tmp/wiki", "--limit", "3"])
+
+        self.assertEqual(args.wiki_root, Path("/tmp/wiki"))
+        self.assertEqual(args.limit, 3)
+
 
 def clean_wiki(root: Path) -> Path:
     root.mkdir(parents=True)

@@ -21,6 +21,7 @@ from wiki_tool.catalog import (
     list_aliases,
     open_path,
     query_catalog,
+    scan_freshness,
     scan_wiki,
 )
 from wiki_tool.devrefs import (
@@ -97,6 +98,12 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--alias-map", type=Path, default=DEFAULT_ALIAS_MAP)
     scan.set_defaults(func=cmd_scan)
 
+    scan_status = sub.add_parser("scan-status", help="compare the catalog to a wiki root for stale-scan detection")
+    add_json_flag(scan_status)
+    scan_status.add_argument("--wiki-root", type=Path, help="root to compare; defaults to the catalog scan root")
+    scan_status.add_argument("--limit", type=int, default=25, help="maximum changed paths to include per section")
+    scan_status.set_defaults(func=cmd_scan_status)
+
     find = sub.add_parser("find", help="search notes, headings, and symbol seeds")
     add_json_flag(find)
     find.add_argument("query")
@@ -168,6 +175,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit = sub.add_parser("audit", help="summarize catalog health")
     add_json_flag(audit)
+    audit.add_argument("--wiki-root", type=Path, help="root to compare for stale-scan detection")
+    audit.add_argument("--freshness-limit", type=int, default=25)
     audit.add_argument("--write", action="store_true", help="write a local audit markdown report")
     audit.set_defaults(func=cmd_audit)
 
@@ -363,6 +372,10 @@ def cmd_scan(args: argparse.Namespace) -> dict[str, Any]:
     return {"scan": result.__dict__}
 
 
+def cmd_scan_status(args: argparse.Namespace) -> dict[str, Any]:
+    return {"scan_freshness": scan_freshness(args.db, root=args.wiki_root, limit=args.limit)}
+
+
 def cmd_find(args: argparse.Namespace) -> dict[str, Any]:
     symbols = query_catalog(args.db, "symbol.search", args.query, args.limit)
     spans = query_catalog(args.db, "span.searchText", args.query, args.limit)
@@ -426,7 +439,7 @@ def cmd_page_quality_write(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cmd_audit(args: argparse.Namespace) -> dict[str, Any]:
-    summary = audit_summary(args.db)
+    summary = audit_summary(args.db, freshness_root=args.wiki_root, freshness_limit=args.freshness_limit)
     if args.write:
         path = Path("state") / f"audit_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -745,6 +758,7 @@ def indent(lines: list[str]) -> list[str]:
 
 
 def render_audit(summary: dict[str, Any]) -> str:
+    freshness = summary.get("scan_freshness", {})
     return "\n".join(
         [
             "# Wiki Catalog Audit",
@@ -754,10 +768,24 @@ def render_audit(summary: dict[str, Any]) -> str:
             f"- broken_links: `{summary['broken_links']}`",
             f"- notes_without_headings: `{summary['notes_without_headings']}`",
             f"- notes_without_inbound_links: `{summary['notes_without_inbound_links']}`",
+            f"- scan_freshness: `{freshness.get('status', 'unknown')}`",
             "",
             "## Counts",
             "",
             *[f"- {key}: `{value}`" for key, value in summary.get("counts", {}).items()],
+            "",
+            "## Scan Freshness",
+            "",
+            f"- status: `{freshness.get('status', 'unknown')}`",
+            f"- stale: `{freshness.get('stale', 'unknown')}`",
+            f"- reason: `{freshness.get('reason', 'unknown')}`",
+            f"- catalog_root: `{freshness.get('catalog_root')}`",
+            f"- checked_root: `{freshness.get('checked_root')}`",
+            f"- added_document_count: `{freshness.get('added_document_count')}`",
+            f"- modified_document_count: `{freshness.get('modified_document_count')}`",
+            f"- removed_document_count: `{freshness.get('removed_document_count')}`",
+            f"- added_file_count: `{freshness.get('added_file_count')}`",
+            f"- removed_file_count: `{freshness.get('removed_file_count')}`",
             "",
             "## Broken Link Categories",
             "",

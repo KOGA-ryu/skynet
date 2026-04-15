@@ -38,6 +38,7 @@ Create or refresh the local working mirror:
 ```bash
 tools/sync_wiki_mirror.sh
 python3 -m wiki_tool scan --wiki-root state/wiki_mirror --json
+python3 -m wiki_tool scan-status --json
 ```
 
 Search the derived catalog:
@@ -47,6 +48,8 @@ python3 -m wiki_tool find "scanner evidence"
 python3 -m wiki_tool refs concepts/retrieval.md
 python3 -m wiki_tool headings projects/stock_trading/README.md
 python3 -m wiki_tool broken-links --limit 25
+python3 -m wiki_tool scan-status --json
+python3 -m wiki_tool scan-status --wiki-root /Volumes/wiki --limit 25 --json
 python3 -m wiki_tool audit --write
 python3 -m wiki_tool health --json
 python3 -m wiki_tool explain "adapter boundary"
@@ -140,6 +143,10 @@ Design rules:
   it from the NAS with `tools/sync_wiki_mirror.sh`.
 - SQLite is a derived read layer.
 - v1 indexes Markdown text and validates links to existing wiki files.
+- `scan-status` and `audit` report stale catalogs by comparing the latest
+  cataloged Markdown hashes and tracked file paths against a wiki root.
+- Use `scan-status --wiki-root /Volumes/wiki` when a mirror-built catalog needs
+  to be checked against the live NAS before a write-oriented workflow.
 - Template placeholder links are excluded from actionable broken-link counts.
 - Harness specs live in `harness_specs/` as Markdown with fenced YAML blocks.
 - Harness runs are persisted separately in `state/harness.sqlite`.
