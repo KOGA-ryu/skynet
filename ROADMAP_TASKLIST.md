@@ -18,7 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T101814Z:838b2e4cc6371c4c`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `8f073d2` (`Keep mirror guard marker outside sync root`).
+- [x] Latest source checkpoint: `891ce9e` (`Add patch bundle root preflight`).
 - [ ] Current active task: tighten contract and schema validation.
 - [x] Root preflight implementation status: complete; real applies now require
   bundle/catalog roots to match `--wiki-root`.
