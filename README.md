@@ -57,6 +57,7 @@ python3 -m wiki_tool project-reports write --output-dir state/project_reports --
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality thin --json
 python3 -m wiki_tool page-quality missing-summaries --json
+python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality unclear-hubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 python3 -m wiki_tool devrefs audit --json
@@ -124,6 +125,8 @@ Page quality reports:
 
 - `page-quality` identifies thin notes, weak/missing summaries, and unclear hub
   pages for librarian review.
+- `page-quality stubs` isolates generated stub pages that still need
+  human-written content.
 - Markdown report writes are local-only under ignored `state/page_quality/`;
   they do not edit NAS Markdown.
 

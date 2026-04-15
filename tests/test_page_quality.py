@@ -9,6 +9,7 @@ import unittest
 from wiki_tool.catalog import scan_wiki
 from wiki_tool.cli import build_parser
 from wiki_tool.page_quality import (
+    generated_stubs_report,
     missing_summaries_report,
     page_quality_summary,
     thin_notes_report,
@@ -55,6 +56,36 @@ class PageQualityTests(unittest.TestCase):
             self.assertEqual(hub["outbound_link_count"], 1)
             self.assertEqual(thin["inbound_count"], 2)
 
+    def test_generated_stubs_report_only_lists_exact_generated_stubs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = build_quality_catalog(tmp)
+
+            report = generated_stubs_report(db)
+            stub_paths = paths(report["stubs"])
+
+            self.assertEqual(report["stub_count"], 2)
+            self.assertEqual(report["total_inbound_references"], 3)
+            self.assertIn("concepts/stub.md", stub_paths)
+            self.assertIn("concepts/stub_priority.md", stub_paths)
+            self.assertNotIn("concepts/thin.md", stub_paths)
+            self.assertNotIn("concepts/stub_like_note.md", stub_paths)
+
+    def test_generated_stubs_report_orders_and_groups_inbound_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = build_quality_catalog(tmp)
+
+            report = generated_stubs_report(db)
+            first = report["stubs"][0]
+
+            self.assertEqual(first["path"], "concepts/stub_priority.md")
+            self.assertEqual(first["inbound_count"], 2)
+            self.assertEqual(first["source_count"], 2)
+            self.assertEqual(
+                [source["source_path"] for source in first["inbound_sources"]],
+                ["concepts/source.md", "index.md"],
+            )
+            self.assertIn("generated_stub_marker", first["reasons"])
+
     def test_write_page_quality_reports_creates_local_markdown_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = build_quality_catalog(tmp)
@@ -62,12 +93,16 @@ class PageQualityTests(unittest.TestCase):
 
             result = write_page_quality_reports(db, output_dir=output_dir)
 
-            self.assertEqual(result["file_count"], 4)
+            self.assertEqual(result["file_count"], 5)
+            self.assertEqual(result["generated_stub_count"], 2)
             self.assertTrue((output_dir / "README.md").exists())
             self.assertTrue((output_dir / "thin_notes.md").exists())
             self.assertTrue((output_dir / "missing_summaries.md").exists())
+            self.assertTrue((output_dir / "generated_stubs.md").exists())
             self.assertTrue((output_dir / "unclear_hubs.md").exists())
+            self.assertIn("Generated Stubs", (output_dir / "README.md").read_text())
             self.assertIn("concepts/thin.md", (output_dir / "thin_notes.md").read_text())
+            self.assertIn("concepts/stub_priority.md", (output_dir / "generated_stubs.md").read_text())
             self.assertIn("projects/alpha/README.md", (output_dir / "unclear_hubs.md").read_text())
 
     def test_cli_help_exposes_page_quality_commands(self) -> None:
@@ -80,6 +115,7 @@ class PageQualityTests(unittest.TestCase):
         self.assertIn("thin", help_text)
         self.assertIn("missing-summaries", help_text)
         self.assertIn("unclear-hubs", help_text)
+        self.assertIn("stubs", help_text)
         self.assertIn("write", help_text)
 
 
@@ -91,8 +127,13 @@ def build_quality_catalog(tmp: str) -> Path:
 
     (root / "index.md").write_text(
         "# Home\n\n"
-        "This index page links to [Thin](concepts/thin.md), [Strong](concepts/strong.md), "
-        "and [Alpha](projects/alpha/README.md).\n"
+        "This index page links to [Thin](concepts/thin.md), "
+        "[Strong](concepts/strong.md), [Alpha](projects/alpha/README.md), "
+        "and [Priority Stub](concepts/stub_priority.md).\n"
+    )
+    (root / "concepts" / "source.md").write_text(
+        "# Source\n\n"
+        "This source links to [Priority Stub](stub_priority.md) and [Stub](stub.md).\n"
     )
     (root / "concepts" / "thin.md").write_text("# Thin\n\nTiny note.\n")
     (root / "concepts" / "no_summary.md").write_text(
@@ -102,6 +143,18 @@ def build_quality_catalog(tmp: str) -> Path:
     )
     (root / "concepts" / "stub.md").write_text(
         "# Stub\n\n"
+        "Generated stub.\n\n"
+        "- Status: stub\n"
+        "- Content has not been filled in yet.\n"
+    )
+    (root / "concepts" / "stub_priority.md").write_text(
+        "# Stub Priority\n\n"
+        "Generated stub.\n\n"
+        "- Status: stub\n"
+        "- Content has not been filled in yet.\n"
+    )
+    (root / "concepts" / "stub_like_note.md").write_text(
+        "# Stub Like Note\n\n"
         "Generated stub. Status: stub.\n"
     )
     (root / "concepts" / "strong.md").write_text(strong_note())

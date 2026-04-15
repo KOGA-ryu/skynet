@@ -26,6 +26,8 @@ APIs.
   tests.
 - Search/navigation commands can find documents, headings, references, symbols,
   explanations, project reports, and page-quality queues.
+- Page-quality queues include a focused generated-stub report for placeholder
+  Markdown pages that still need human-written content.
 - Patch bundles provide the guarded path for NAS edits with validation, dry-run
   summaries, backups, manifests, reports, and rollback.
 - Portable `dev://<repo>/<path>` references work for the Mac dev root and are
@@ -78,6 +80,13 @@ Run the eval suite:
 python3 -m wiki_tool eval run --json
 ```
 
+List generated stubs that still need content:
+
+```bash
+python3 -m wiki_tool page-quality stubs --json
+python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
+```
+
 Use the local JSON-RPC API:
 
 ```bash
@@ -93,7 +102,8 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method
   only after that environment is known.
 - Stale-scan detection, scheduled audits, and retrieval-profile comparison are
   still pending.
-- Generated stub pages need a human-content report and promotion queue.
+- Generated stub pages still need a promotion queue after the focused
+  human-content report.
 - Project-level librarian reports and recurring editorial review cadence remain
   next-stage editorial operations.
 - A package entry point can be added later if `python3 -m wiki_tool ...` becomes

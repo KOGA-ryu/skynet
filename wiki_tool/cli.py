@@ -54,6 +54,7 @@ from wiki_tool.patch_bundle import (
 )
 from wiki_tool.page_quality import (
     DEFAULT_PAGE_QUALITY_DIR,
+    generated_stubs_report,
     missing_summaries_report,
     page_quality_summary,
     thin_notes_report,
@@ -154,6 +155,9 @@ def build_parser() -> argparse.ArgumentParser:
     page_quality_hubs = page_quality_sub.add_parser("unclear-hubs", help="list unclear hub pages")
     add_json_flag(page_quality_hubs)
     page_quality_hubs.set_defaults(func=cmd_page_quality_unclear_hubs)
+    page_quality_stubs = page_quality_sub.add_parser("stubs", help="list generated stubs needing human content")
+    add_json_flag(page_quality_stubs)
+    page_quality_stubs.set_defaults(func=cmd_page_quality_stubs)
     page_quality_write = page_quality_sub.add_parser("write", help="write local Markdown page quality reports")
     add_json_flag(page_quality_write)
     page_quality_write.add_argument("--output-dir", type=Path, default=DEFAULT_PAGE_QUALITY_DIR)
@@ -408,6 +412,10 @@ def cmd_page_quality_missing_summaries(args: argparse.Namespace) -> dict[str, An
 
 def cmd_page_quality_unclear_hubs(args: argparse.Namespace) -> dict[str, Any]:
     return unclear_hubs_report(args.db)
+
+
+def cmd_page_quality_stubs(args: argparse.Namespace) -> dict[str, Any]:
+    return generated_stubs_report(args.db)
 
 
 def cmd_page_quality_write(args: argparse.Namespace) -> dict[str, Any]:

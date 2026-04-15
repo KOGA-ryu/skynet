@@ -15,12 +15,18 @@ THIN_BYTE_LIMIT = 800
 SUMMARY_WORD_LIMIT = 25
 HUB_OVERVIEW_WORD_LIMIT = 40
 HUB_OUTBOUND_LINK_LIMIT = 3
+GENERATED_STUB_MARKERS = (
+    "this stub exists because current wiki notes link to",
+    "- status: stub",
+    "content has not been filled in yet",
+)
 
 
 def page_quality_summary(db_path: Path) -> dict[str, Any]:
     report = build_page_quality_report(db_path)
     return {
         "generated_at_utc": report["generated_at_utc"],
+        "generated_stub_count": len(report["generated_stubs"]),
         "missing_summary_count": len(report["missing_summaries"]),
         "thin_note_count": len(report["thin_notes"]),
         "thresholds": report["thresholds"],
@@ -28,6 +34,17 @@ def page_quality_summary(db_path: Path) -> dict[str, Any]:
         + len(report["missing_summaries"])
         + len(report["unclear_hubs"]),
         "unclear_hub_count": len(report["unclear_hubs"]),
+    }
+
+
+def generated_stubs_report(db_path: Path) -> dict[str, Any]:
+    report = build_page_quality_report(db_path)
+    stubs = report["generated_stubs"]
+    return {
+        "generated_at_utc": report["generated_at_utc"],
+        "stub_count": len(stubs),
+        "stubs": stubs,
+        "total_inbound_references": sum(int(stub["inbound_count"]) for stub in stubs),
     }
 
 
@@ -79,6 +96,7 @@ def write_page_quality_reports(
             report["missing_summaries"],
             intro="Notes whose opening summary is missing, very short, or still stub-like.",
         ),
+        "generated_stubs.md": render_generated_stubs_markdown(report["generated_stubs"]),
         "unclear_hubs.md": render_candidates_markdown(
             "Unclear Hubs",
             report["unclear_hubs"],
@@ -93,6 +111,7 @@ def write_page_quality_reports(
     return {
         "file_count": len(written),
         "files": written,
+        "generated_stub_count": len(report["generated_stubs"]),
         "missing_summary_count": len(report["missing_summaries"]),
         "output_dir": str(output_dir),
         "thin_note_count": len(report["thin_notes"]),
@@ -103,6 +122,7 @@ def write_page_quality_reports(
 def build_page_quality_report(db_path: Path) -> dict[str, Any]:
     docs, links, headings = load_quality_rows(db_path)
     inbound_counts, outbound_counts = link_counts(links)
+    inbound_by_target = inbound_links_by_target(links)
     heading_counts = {
         path: sum(1 for heading in items if int(heading["level"]) > 0)
         for path, items in headings.items()
@@ -111,6 +131,7 @@ def build_page_quality_report(db_path: Path) -> dict[str, Any]:
         build_quality_entry(
             doc,
             inbound_count=inbound_counts.get(str(doc["path"]), 0),
+            inbound_links=inbound_by_target.get(str(doc["path"]), []),
             outbound_count=outbound_counts.get(str(doc["path"]), 0),
             heading_count=heading_counts.get(str(doc["path"]), 0),
         )
@@ -128,8 +149,18 @@ def build_page_quality_report(db_path: Path) -> dict[str, Any]:
         [entry for entry in entries if is_unclear_hub(entry)],
         key=lambda item: (-len(item["reasons"]), item["outbound_link_count"], item["path"]),
     )
+    generated_stubs = sorted(
+        [generated_stub_entry(entry) for entry in entries if entry["generated_stub"]],
+        key=lambda item: (
+            -int(item["inbound_count"]),
+            -int(item["source_count"]),
+            0 if is_hub_path(str(item["path"])) else 1,
+            item["path"],
+        ),
+    )
     return {
         "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "generated_stubs": generated_stubs,
         "missing_summaries": missing,
         "thin_notes": thin,
         "thresholds": thresholds(),
@@ -151,7 +182,7 @@ def load_quality_rows(
         ).fetchall()
         links = con.execute(
             """
-            SELECT source_path, target_path, resolved
+            SELECT source_path, target_raw, target_path, label, link_kind, line, resolved
             FROM links
             ORDER BY source_path, target_path
             """
@@ -174,6 +205,7 @@ def build_quality_entry(
     doc: dict[str, Any],
     *,
     inbound_count: int,
+    inbound_links: list[dict[str, Any]],
     outbound_count: int,
     heading_count: int,
 ) -> dict[str, Any]:
@@ -181,13 +213,17 @@ def build_quality_entry(
     summary = first_summary_paragraph(text)
     summary_words = word_count(summary)
     words = word_count(text)
+    inbound_sources = inbound_source_reports(inbound_links)
     entry = {
         "byte_size": int(doc["byte_size"]),
+        "generated_stub": is_generated_stub_text(text),
         "heading_count": heading_count,
         "inbound_count": inbound_count,
+        "inbound_sources": inbound_sources,
         "kind": doc["kind"],
         "outbound_link_count": outbound_count,
         "path": doc["path"],
+        "source_count": len(inbound_sources),
         "summary": summary,
         "summary_word_count": summary_words,
         "suggested_next_action": "add a clear summary and enough context for standalone use",
@@ -196,6 +232,20 @@ def build_quality_entry(
     }
     entry["reasons"] = candidate_reasons(entry)
     return entry
+
+
+def generated_stub_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "byte_size": entry["byte_size"],
+        "inbound_count": entry["inbound_count"],
+        "inbound_sources": entry["inbound_sources"],
+        "path": entry["path"],
+        "reasons": unique(["generated_stub_marker", *entry["reasons"]]),
+        "source_count": entry["source_count"],
+        "suggested_next_action": "replace the generated stub with a useful summary, decisions, evidence, and links",
+        "title": entry["title"],
+        "word_count": entry["word_count"],
+    }
 
 
 def candidate_reasons(entry: dict[str, Any]) -> list[str]:
@@ -260,6 +310,29 @@ def link_counts(links: list[dict[str, Any]]) -> tuple[dict[str, int], dict[str, 
     return inbound, outbound
 
 
+def inbound_links_by_target(links: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    inbound: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for link in links:
+        if int(link["resolved"]) and link.get("target_path"):
+            inbound[str(link["target_path"])].append(link)
+    return inbound
+
+
+def inbound_source_reports(links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for link in links:
+        grouped[str(link["source_path"])].append(link)
+    return [
+        {
+            "labels": [str(item["label"]) for item in items],
+            "line_count": len(items),
+            "lines": [int(item["line"]) for item in items],
+            "source_path": source_path,
+        }
+        for source_path, items in sorted(grouped.items())
+    ]
+
+
 def first_summary_paragraph(text: str) -> str:
     in_frontmatter = False
     lines: list[str] = []
@@ -313,6 +386,11 @@ def looks_like_stub(summary: str) -> bool:
     return any(phrase in lowered for phrase in phrases)
 
 
+def is_generated_stub_text(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in GENERATED_STUB_MARKERS)
+
+
 def excluded_quality_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     return (
@@ -358,12 +436,14 @@ def render_index_markdown(report: dict[str, Any]) -> str:
         f"- generated_at_utc: `{report['generated_at_utc']}`",
         f"- thin_note_count: `{len(report['thin_notes'])}`",
         f"- missing_summary_count: `{len(report['missing_summaries'])}`",
+        f"- generated_stub_count: `{len(report['generated_stubs'])}`",
         f"- unclear_hub_count: `{len(report['unclear_hubs'])}`",
         "",
         "## Reports",
         "",
         "- [Thin Notes](thin_notes.md)",
         "- [Missing Summaries](missing_summaries.md)",
+        "- [Generated Stubs](generated_stubs.md)",
         "- [Unclear Hubs](unclear_hubs.md)",
         "",
     ]
@@ -398,6 +478,52 @@ def render_candidates_markdown(title: str, candidates: list[dict[str, Any]], *, 
             )
         )
     lines.append("")
+    return "\n".join(lines)
+
+
+def render_generated_stubs_markdown(stubs: list[dict[str, Any]]) -> str:
+    lines = [
+        "# Generated Stubs",
+        "",
+        "Generated Markdown stubs that still need human-written content.",
+        "",
+        f"- generated_at_utc: `{datetime.now(UTC).isoformat(timespec='seconds')}`",
+        f"- stub_count: `{len(stubs)}`",
+        f"- total_inbound_references: `{sum(int(stub['inbound_count']) for stub in stubs)}`",
+        "",
+        "| path | title | inbound | sources | words | bytes | reasons | next action |",
+        "|---|---|---:|---:|---:|---:|---|---|",
+    ]
+    if not stubs:
+        lines.append("| none | none | 0 | 0 | 0 | 0 | none | none |")
+    for stub in stubs:
+        lines.append(
+            "| {path} | {title} | {inbound} | {sources} | {words} | {bytes} | {reasons} | {action} |".format(
+                action=escape_table(str(stub["suggested_next_action"])),
+                bytes=stub["byte_size"],
+                inbound=stub["inbound_count"],
+                path=escape_table(f"`{stub['path']}`"),
+                reasons=escape_table(", ".join(stub["reasons"])),
+                sources=stub["source_count"],
+                title=escape_table(str(stub["title"])),
+                words=stub["word_count"],
+            )
+        )
+    lines.extend(["", "## Inbound Sources", ""])
+    if not stubs:
+        lines.append("- none")
+    for stub in stubs:
+        lines.append(f"### `{stub['path']}`")
+        if stub["inbound_sources"]:
+            for source in stub["inbound_sources"]:
+                labels = ", ".join(str(label) for label in source["labels"])
+                lines.append(
+                    f"- `{source['source_path']}` lines `{', '.join(str(line) for line in source['lines'])}` "
+                    f"labels `{labels}`"
+                )
+        else:
+            lines.append("- no inbound sources")
+        lines.append("")
     return "\n".join(lines)
 
 
