@@ -37,6 +37,8 @@ class JsonRpcApiTests(unittest.TestCase):
             self.assertTrue(
                 {
                     "api.methods",
+                    "harness.run",
+                    "harness.show",
                     "symbol.search",
                     "span.searchText",
                     "span.listHeadings",
@@ -87,6 +89,62 @@ class JsonRpcApiTests(unittest.TestCase):
             self.assertNotIn("text", symbols[0])
             self.assertNotIn("text", spans[0])
             self.assertEqual(audit_response["result"]["summary"]["status"], "fail")
+
+    def test_harness_run_and_show_return_bounded_api_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = fixture_catalog(tmp)
+            harness_db = Path(tmp) / "harness.sqlite"
+
+            run_response = handle_jsonrpc(
+                request(1, "harness.run", {"query": "retrieval"}),
+                db_path=catalog_db,
+                harness_db=harness_db,
+                trace_path=None,
+            )
+
+            run_result = run_response["result"]
+            self.assertEqual(run_result["method"], "harness.run")
+            self.assertEqual(run_result["status"], "pass")
+            self.assertEqual(run_result["policy"]["returned"], "bounded-harness-answer")
+            self.assertTrue(run_result["citations"])
+            self.assertIn("answer_markdown", run_result)
+
+            show_response = handle_jsonrpc(
+                request(2, "harness.show", {"run_id": run_result["run_id"], "limit": 2}),
+                db_path=catalog_db,
+                harness_db=harness_db,
+                trace_path=None,
+            )
+
+            show_result = show_response["result"]
+            self.assertEqual(show_result["method"], "harness.show")
+            self.assertEqual(show_result["run"]["run_id"], run_result["run_id"])
+            self.assertLessEqual(len(show_result["steps"]), 2)
+            self.assertLessEqual(len(show_result["retrieval_candidates"]), 2)
+            self.assertNotIn("input", show_result["steps"][0])
+            self.assertNotIn("output", show_result["steps"][0])
+            self.assertEqual(show_result["policy"]["returned"], "bounded-harness-trace")
+
+    def test_harness_jsonrpc_errors_use_invalid_params(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = fixture_catalog(tmp)
+            harness_db = Path(tmp) / "harness.sqlite"
+
+            bad_synthesis = handle_jsonrpc(
+                request(1, "harness.run", {"query": "retrieval", "synthesis": "bad"}),
+                db_path=catalog_db,
+                harness_db=harness_db,
+                trace_path=None,
+            )
+            missing_run = handle_jsonrpc(
+                request(2, "harness.show", {"run_id": "run:missing"}),
+                db_path=catalog_db,
+                harness_db=harness_db,
+                trace_path=None,
+            )
+
+            self.assertEqual(bad_synthesis["error"]["code"], INVALID_PARAMS)
+            self.assertEqual(missing_run["error"]["code"], INVALID_PARAMS)
 
     def test_limits_are_clamped_and_mark_truncated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -144,6 +202,24 @@ class JsonRpcApiTests(unittest.TestCase):
             self.assertEqual(traces[0]["policy"]["returned"], "symbol-handles")
             self.assertEqual(traces[1]["error"]["code"], METHOD_NOT_FOUND)
 
+    def test_trace_file_records_harness_method_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = fixture_catalog(tmp)
+            harness_db = Path(tmp) / "harness.sqlite"
+            trace_path = Path(tmp) / "api_traces.jsonl"
+
+            handle_jsonrpc(
+                request(1, "harness.run", {"query": "retrieval"}),
+                db_path=catalog_db,
+                harness_db=harness_db,
+                trace_path=trace_path,
+            )
+
+            traces = [json.loads(line) for line in trace_path.read_text().splitlines()]
+            self.assertEqual(traces[0]["method"], "harness.run")
+            self.assertEqual(traces[0]["params"]["query"], "retrieval")
+            self.assertEqual(traces[0]["policy"]["returned"], "bounded-harness-answer")
+
     def test_cli_exposes_api_request_and_serve(self) -> None:
         parser = build_parser()
         stdout = io.StringIO()
@@ -151,6 +227,8 @@ class JsonRpcApiTests(unittest.TestCase):
             parser.parse_args(["api", "request", "--help"])
         help_text = stdout.getvalue()
         self.assertIn("--request-json", help_text)
+        self.assertIn("--harness-db", help_text)
+        self.assertIn("--spec-dir", help_text)
 
     def test_cli_request_and_serve_emit_jsonrpc_responses(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

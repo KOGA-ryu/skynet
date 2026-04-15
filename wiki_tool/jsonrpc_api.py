@@ -12,6 +12,12 @@ from wiki_tool.catalog import (
     get_headings,
     query_catalog,
 )
+from wiki_tool.harness import (
+    DEFAULT_HARNESS_DB,
+    DEFAULT_SPEC_DIR,
+    get_harness_run,
+    run_answer_with_citations,
+)
 
 
 DEFAULT_API_TRACE = Path("state/api_traces.jsonl")
@@ -27,6 +33,9 @@ SEARCH_DEFAULT_LIMIT = 10
 SEARCH_MAX_LIMIT = 25
 LIST_DEFAULT_LIMIT = 100
 LIST_MAX_LIMIT = 250
+HARNESS_DEFAULT_LIMIT = 25
+HARNESS_MAX_LIMIT = 100
+ANSWER_MAX_CHARS = 4000
 
 METHODS: dict[str, dict[str, Any]] = {
     "api.methods": {
@@ -61,6 +70,22 @@ METHODS: dict[str, dict[str, Any]] = {
         "description": "Return the current catalog audit summary.",
         "params": {},
     },
+    "harness.run": {
+        "description": "Run the answer-with-citations harness and return a bounded answer summary.",
+        "params": {
+            "query": "string",
+            "synthesis": "string optional; deterministic or openai",
+            "limit": "integer optional",
+        },
+        "default_limit": HARNESS_DEFAULT_LIMIT,
+        "max_limit": HARNESS_MAX_LIMIT,
+    },
+    "harness.show": {
+        "description": "Show a bounded persisted harness run trace.",
+        "params": {"run_id": "string", "limit": "integer optional"},
+        "default_limit": HARNESS_DEFAULT_LIMIT,
+        "max_limit": HARNESS_MAX_LIMIT,
+    },
 }
 
 
@@ -75,6 +100,8 @@ def handle_jsonrpc_text(
     text: str,
     *,
     db_path: Path = DEFAULT_DB,
+    harness_db: Path = DEFAULT_HARNESS_DB,
+    spec_dir: Path = DEFAULT_SPEC_DIR,
     trace_path: Path | None = DEFAULT_API_TRACE,
 ) -> dict[str, Any] | None:
     try:
@@ -83,20 +110,28 @@ def handle_jsonrpc_text(
         response = error_response(None, PARSE_ERROR, "Parse error")
         trace_error(trace_path, method=None, request_id=None, code=PARSE_ERROR, message="Parse error")
         return response
-    return handle_jsonrpc(request, db_path=db_path, trace_path=trace_path)
+    return handle_jsonrpc(
+        request,
+        db_path=db_path,
+        harness_db=harness_db,
+        spec_dir=spec_dir,
+        trace_path=trace_path,
+    )
 
 
 def handle_jsonrpc(
     request: Any,
     *,
     db_path: Path = DEFAULT_DB,
+    harness_db: Path = DEFAULT_HARNESS_DB,
+    spec_dir: Path = DEFAULT_SPEC_DIR,
     trace_path: Path | None = DEFAULT_API_TRACE,
 ) -> dict[str, Any] | None:
     request_id = request.get("id") if isinstance(request, dict) else None
     method = request.get("method") if isinstance(request, dict) else None
     try:
         method, params, request_id, notification = validate_request(request)
-        result = dispatch_method(method, params, db_path=db_path)
+        result = dispatch_method(method, params, db_path=db_path, harness_db=harness_db, spec_dir=spec_dir)
     except JsonRpcException as exc:
         response = error_response(request_id, exc.code, exc.message)
         trace_error(trace_path, method=method, request_id=request_id, code=exc.code, message=exc.message)
@@ -134,7 +169,14 @@ def validate_request(request: Any) -> tuple[str, dict[str, Any], Any, bool]:
     return method, params, request.get("id"), "id" not in request
 
 
-def dispatch_method(method: str, params: dict[str, Any], *, db_path: Path) -> dict[str, Any]:
+def dispatch_method(
+    method: str,
+    params: dict[str, Any],
+    *,
+    db_path: Path,
+    harness_db: Path,
+    spec_dir: Path,
+) -> dict[str, Any]:
     if method == "api.methods":
         return api_methods()
     if method == "symbol.search":
@@ -151,6 +193,10 @@ def dispatch_method(method: str, params: dict[str, Any], *, db_path: Path) -> di
             "summary": audit_summary(db_path),
             "policy": policy("audit-summary", returned="summary"),
         }
+    if method == "harness.run":
+        return run_harness_method(params, db_path=db_path, harness_db=harness_db, spec_dir=spec_dir)
+    if method == "harness.show":
+        return show_harness_method(params, harness_db=harness_db)
     raise JsonRpcException(METHOD_NOT_FOUND, "Method not found")
 
 
@@ -223,6 +269,232 @@ def find_link_references(params: dict[str, Any], *, db_path: Path) -> dict[str, 
         "references": results,
         "policy": policy("bounded-reference-list", returned="reference-handles"),
     }
+
+
+def run_harness_method(
+    params: dict[str, Any],
+    *,
+    db_path: Path,
+    harness_db: Path,
+    spec_dir: Path,
+) -> dict[str, Any]:
+    query = required_string(params, "query")
+    synthesis = optional_synthesis(params)
+    limit = bounded_limit(params, default=HARNESS_DEFAULT_LIMIT, maximum=HARNESS_MAX_LIMIT)
+    harness_result = run_answer_with_citations(
+        query,
+        catalog_db=db_path,
+        harness_db=harness_db,
+        spec_dir=spec_dir,
+        synthesis=synthesis,
+    )
+    trace = get_harness_run(str(harness_result["run_id"]), harness_db)
+    result_citations = list_value(harness_result.get("citations", []))
+    result_failures = list_value(harness_result.get("failures", []))
+    result_failure_actions = list_value(harness_result.get("failure_actions", []))
+    citations, citations_truncated = slice_results(
+        [citation_summary(item) for item in result_citations],
+        limit,
+    )
+    failures, failures_truncated = slice_results(
+        [failure_summary(item) for item in result_failures],
+        limit,
+    )
+    failure_actions, failure_actions_truncated = slice_results(
+        [failure_action_summary(item) for item in result_failure_actions],
+        limit,
+    )
+    return {
+        "answer_markdown": truncate_text(str(harness_result.get("answer_markdown", "")), ANSWER_MAX_CHARS),
+        "citations": citations,
+        "counts": {
+            "citation_count": len(result_citations),
+            "failure_action_count": len(result_failure_actions),
+            "failure_count": len(result_failures),
+        },
+        "failure_actions": failure_actions,
+        "failures": failures,
+        "method": "harness.run",
+        "metrics": trace["run"].get("metrics", {}),
+        "policy": policy("harness-run", returned="bounded-harness-answer"),
+        "query": query,
+        "run_id": harness_result["run_id"],
+        "status": harness_result["status"],
+        "synthesis": harness_result.get("synthesis", {}),
+        "truncated": {
+            "answer_markdown": len(str(harness_result.get("answer_markdown", ""))) > ANSWER_MAX_CHARS,
+            "citations": citations_truncated,
+            "failure_actions": failure_actions_truncated,
+            "failures": failures_truncated,
+        },
+    }
+
+
+def show_harness_method(params: dict[str, Any], *, harness_db: Path) -> dict[str, Any]:
+    run_id = required_string(params, "run_id")
+    limit = bounded_limit(params, default=HARNESS_DEFAULT_LIMIT, maximum=HARNESS_MAX_LIMIT)
+    try:
+        trace = get_harness_run(run_id, harness_db)
+    except KeyError as exc:
+        raise JsonRpcException(INVALID_PARAMS, f"Invalid params: {exc}") from exc
+
+    steps, steps_truncated = slice_results([step_summary(item) for item in trace["steps"]], limit)
+    candidates, candidates_truncated = slice_results(
+        [retrieval_candidate_summary(item) for item in trace["retrieval_candidates"]],
+        limit,
+    )
+    failures, failures_truncated = slice_results(
+        [failure_summary(item) for item in trace["failures"]],
+        limit,
+    )
+    outputs = trace["run"].get("outputs", {})
+    return {
+        "failures": failures,
+        "method": "harness.show",
+        "outputs": output_summary(outputs, limit=limit),
+        "policy": policy("harness-show", returned="bounded-harness-trace"),
+        "retrieval_candidates": candidates,
+        "run": run_summary(trace["run"]),
+        "steps": steps,
+        "truncated": {
+            "failures": failures_truncated,
+            "retrieval_candidates": candidates_truncated,
+            "steps": steps_truncated,
+        },
+    }
+
+
+def optional_synthesis(params: dict[str, Any]) -> str:
+    value = params.get("synthesis", "deterministic")
+    if not isinstance(value, str):
+        raise JsonRpcException(INVALID_PARAMS, "Invalid params: synthesis must be a string")
+    value = value.strip()
+    if value not in {"deterministic", "openai"}:
+        raise JsonRpcException(INVALID_PARAMS, "Invalid params: synthesis must be deterministic or openai")
+    return value
+
+
+def run_summary(run: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "chain_id": run.get("chain_id"),
+        "chain_version": run.get("chain_version"),
+        "ended_at_utc": run.get("ended_at_utc"),
+        "inputs": {
+            "synthesis": run.get("inputs", {}).get("synthesis"),
+            "user_query": run.get("inputs", {}).get("user_query"),
+        },
+        "metrics": run.get("metrics", {}),
+        "run_id": run.get("run_id"),
+        "started_at_utc": run.get("started_at_utc"),
+        "status": run.get("status"),
+        "task_id": run.get("task_id"),
+        "task_version": run.get("task_version"),
+    }
+
+
+def step_summary(step: dict[str, Any]) -> dict[str, Any]:
+    output = step.get("output", {})
+    failure_actions = list_value(output.get("failure_actions", []))
+    synthesis_attempts = list_value(output.get("synthesis_attempts", []))
+    return {
+        "failure_action_count": len(failure_actions),
+        "output_keys": sorted(output.keys()),
+        "schema_errors": output.get("schema_errors", []),
+        "status": step.get("status"),
+        "step_id": step.get("step_id"),
+        "step_type": step.get("step_type"),
+        "synthesis_attempt_statuses": [
+            synthesis_attempt_summary(item)
+            for item in synthesis_attempts
+        ],
+        "tool_name": step.get("tool_name"),
+    }
+
+
+def retrieval_candidate_summary(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "artifact_id": candidate.get("artifact_id"),
+        "chunk_id": candidate.get("chunk_id"),
+        "end_line": candidate.get("end_line"),
+        "heading": candidate.get("heading"),
+        "method": candidate.get("method"),
+        "path": candidate.get("path"),
+        "rank": candidate.get("rank"),
+        "score": candidate.get("score"),
+        "start_line": candidate.get("start_line"),
+        "step_id": candidate.get("step_id"),
+    }
+
+
+def citation_summary(citation: Any) -> dict[str, Any]:
+    if not isinstance(citation, dict):
+        return {"artifact_id": None, "chunk_id": None, "quote": str(citation), "relevance_note": None}
+    return {
+        "artifact_id": citation.get("artifact_id"),
+        "chunk_id": citation.get("chunk_id"),
+        "quote": citation.get("quote"),
+        "relevance_note": citation.get("relevance_note"),
+    }
+
+
+def failure_summary(failure: Any) -> dict[str, Any]:
+    if not isinstance(failure, dict):
+        return {"failure_code": None, "severity": None, "step_id": None}
+    return {
+        "failure_code": failure.get("failure_code"),
+        "severity": failure.get("severity"),
+        "step_id": failure.get("step_id"),
+    }
+
+
+def failure_action_summary(action: Any) -> dict[str, Any]:
+    if not isinstance(action, dict):
+        return {"action": None, "source_failure_code": None, "status": None, "step_id": None}
+    return {
+        "action": action.get("action"),
+        "source_failure_code": action.get("source_failure_code"),
+        "status": action.get("status"),
+        "step_id": action.get("step_id"),
+    }
+
+
+def synthesis_attempt_summary(attempt: Any) -> dict[str, Any]:
+    if not isinstance(attempt, dict):
+        return {"attempt": None, "provider": None, "status": None}
+    return {
+        "attempt": attempt.get("attempt"),
+        "provider": attempt.get("provider"),
+        "status": attempt.get("status"),
+    }
+
+
+def output_summary(outputs: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    citations_value = list_value(outputs.get("citations", []))
+    failure_actions = list_value(outputs.get("failure_actions", []))
+    citations, citations_truncated = slice_results(
+        [citation_summary(item) for item in citations_value],
+        limit,
+    )
+    return {
+        "answer_markdown": truncate_text(str(outputs.get("answer_markdown", "")), ANSWER_MAX_CHARS),
+        "citation_count": len(citations_value),
+        "citations": citations,
+        "failure_action_count": len(failure_actions),
+        "truncated": {
+            "answer_markdown": len(str(outputs.get("answer_markdown", ""))) > ANSWER_MAX_CHARS,
+            "citations": citations_truncated,
+        },
+    }
+
+
+def list_value(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def truncate_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars] + "\n[truncated]"
 
 
 def required_string(params: dict[str, Any], key: str) -> str:
@@ -317,14 +589,14 @@ def write_trace(trace_path: Path | None, payload: dict[str, Any]) -> None:
 
 def trace_params(params: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {}
-    for key in ("query", "path", "target", "limit"):
+    for key in ("query", "path", "target", "run_id", "synthesis", "limit"):
         if key in params:
             summary[key] = params[key]
     return summary
 
 
 def result_count(result: dict[str, Any]) -> int | None:
-    for key in ("results", "headings", "references", "methods"):
+    for key in ("results", "headings", "references", "methods", "citations", "steps", "retrieval_candidates"):
         value = result.get(key)
         if isinstance(value, list):
             return len(value)

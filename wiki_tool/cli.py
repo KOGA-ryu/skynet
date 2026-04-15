@@ -262,11 +262,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_json_flag(api_request)
     api_request.add_argument("--request-json", required=True)
     api_request.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    api_request.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    api_request.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
     api_request.add_argument("--trace-path", type=Path, default=DEFAULT_API_TRACE)
     api_request.set_defaults(func=cmd_api_request)
     api_serve = api_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdin/stdout")
     add_json_flag(api_serve)
     api_serve.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    api_serve.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    api_serve.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
     api_serve.add_argument("--trace-path", type=Path, default=DEFAULT_API_TRACE)
     api_serve.set_defaults(func=cmd_api_serve)
 
@@ -597,6 +601,8 @@ def cmd_api_request(args: argparse.Namespace) -> dict[str, Any] | None:
     return handle_jsonrpc_text(
         args.request_json,
         db_path=args.catalog_db,
+        harness_db=args.harness_db,
+        spec_dir=args.spec_dir,
         trace_path=args.trace_path,
     )
 
@@ -608,6 +614,8 @@ def cmd_api_serve(args: argparse.Namespace) -> None:
         response = handle_jsonrpc_text(
             line,
             db_path=args.catalog_db,
+            harness_db=args.harness_db,
+            spec_dir=args.spec_dir,
             trace_path=args.trace_path,
         )
         if response is not None:
