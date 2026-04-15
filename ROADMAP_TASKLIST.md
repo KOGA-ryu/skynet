@@ -15,11 +15,14 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
 - [x] Latest scan run: `scan:20260415T102707Z:f4351838b68707a7`.
-- [x] Latest harness run: `run:20260415T102707Z:838b2e4cc6371c4c`.
+- [x] Latest harness run: `run:20260415T104333Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `badb9b4` (`Add harness trace diffing`).
-- [ ] Current active task: score broken-link regression.
+- [x] Latest source checkpoint: `df86c79` (`Add broken link regression scoring`).
+- [ ] Current active task: add backup restore docs.
+- [x] Broken-link regression status: complete; eval runs now fail when the
+  catalog has actionable broken links and continue to exclude template
+  placeholders.
 - [x] Trace diffing status: complete; `harness diff` compares persisted run
   traces without generating new harness runs.
 - [x] Contract/schema validation status: complete; harness specs and synthesis
@@ -163,7 +166,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Build eval runner over the catalog and harness.
 - [x] Score retrieval hit rate.
 - [x] Score citation validity.
-- [ ] Score broken-link regression.
+- [x] Score broken-link regression.
 - [x] Produce repeatable eval reports.
 - [ ] Compare retrieval profiles before changing search behavior.
 - [ ] Use eval results to choose cleanup targets instead of relying on memory.
@@ -229,16 +232,16 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add broken-link regression scoring to eval reports.
-2. [ ] Add backup restore docs.
-3. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
-4. [ ] Add release notes for the first usable build.
-5. [ ] Build a report of generated stubs that still need human content.
-6. [ ] Add project-level librarian reports.
-7. [ ] Add stale-scan detection when the NAS has changed after the last catalog
+1. [ ] Add backup restore docs.
+2. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
+3. [ ] Add release notes for the first usable build.
+4. [ ] Build a report of generated stubs that still need human content.
+5. [ ] Add project-level librarian reports.
+6. [ ] Add stale-scan detection when the NAS has changed after the last catalog
    build.
-8. [ ] Compare retrieval profiles before changing search behavior.
-9. [ ] Use eval results to choose cleanup targets instead of relying on memory.
+7. [ ] Compare retrieval profiles before changing search behavior.
+8. [ ] Use eval results to choose cleanup targets instead of relying on memory.
+9. [ ] Add optional scheduled scan/audit runner.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -275,6 +278,8 @@ Eval:
 python3 -m wiki_tool eval run --json
 python3 -m wiki_tool eval run --write-report --json
 ```
+
+Eval runs include broken-link regression scoring from the current catalog.
 
 API:
 
