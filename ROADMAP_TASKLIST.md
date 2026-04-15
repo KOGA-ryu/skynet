@@ -32,6 +32,11 @@ as tasks move from planned work into implemented, verified tooling.
   and `intake bundle` now stage reviewed repo findings locally, with the demo
   manifest producing 3 findings, 5 local artifacts, and a valid 2-target patch
   bundle without applying it.
+- [x] Urgent repo-demand intake test status: complete; Rudedude Pack 2 signal
+  quality review generated 11 routed P0 findings, 5 local intake artifacts,
+  and a valid 2-target patch bundle from
+  `docs/60_reviews/active/review_signal_quality_pack_2_manifest.md` without
+  applying it.
 - [x] First usable build release notes status: complete; see
   `RELEASE_NOTES.md`.
 - [x] JSON-RPC harness API status: complete; `harness.run` and `harness.show`
@@ -296,17 +301,18 @@ as tasks move from planned work into implemented, verified tooling.
 ## Next 10 Tasks
 
 1. [ ] Add a promote process for rough notes becoming canonical pages.
-2. [ ] Test repo-demand intake with the urgent real repo demand.
-3. [ ] Add a template-placeholder policy so templates stay useful without
+2. [ ] Add a template-placeholder policy so templates stay useful without
    polluting audits.
-4. [ ] Document editor workflow for MacBook.
-5. [ ] Add recurring audit review cadence.
-6. [ ] Decide when local source-shelf changes should be promoted to NAS.
-7. [ ] Verify local mirror bridge pages after the next NAS refresh.
-8. [ ] Revisit PC access after the Windows-to-Linux decision is final.
-9. [ ] Add Linux path support if the desktop migration lands on Linux.
-10. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the
+3. [ ] Document editor workflow for MacBook.
+4. [ ] Add recurring audit review cadence.
+5. [ ] Decide when local source-shelf changes should be promoted to NAS.
+6. [ ] Verify local mirror bridge pages after the next NAS refresh.
+7. [ ] Revisit PC access after the Windows-to-Linux decision is final.
+8. [ ] Add Linux path support if the desktop migration lands on Linux.
+9. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the
     NAS wiki.
+10. [ ] Decide whether the Rudedude Pack 2 intake packet should be promoted to
+    the NAS after formula/source review.
 
 ## Core Commands
 
