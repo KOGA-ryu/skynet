@@ -52,6 +52,14 @@ class Symbol:
 
 
 @dataclass(frozen=True)
+class CatalogAlias:
+    alias: str
+    normalized: str
+    target_path: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class ScanResult:
     root: str
     run_id: str

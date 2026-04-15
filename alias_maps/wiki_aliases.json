@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "aliases": [
+    {
+      "alias": "stock trading",
+      "target_path": "projects/stock_trading/README.md",
+      "reason": "Common shorthand for the stock trading project hub."
+    },
+    {
+      "alias": "stock trading hub",
+      "target_path": "projects/stock_trading/README.md",
+      "reason": "Explicit shorthand for the stock trading project hub."
+    },
+    {
+      "alias": "scanner app",
+      "target_path": "projects/stock_trading/apps/scanner.md",
+      "reason": "Common shorthand for the scanner app surface."
+    },
+    {
+      "alias": "scanner hub",
+      "target_path": "projects/stock_trading/scanner/README.md",
+      "reason": "Common shorthand for the maintained scanner project hub."
+    },
+    {
+      "alias": "rudedude",
+      "target_path": "projects/stock_trading/apps/rudedude/README.md",
+      "reason": "Common shorthand for the Rudedude repo/app workspace."
+    },
+    {
+      "alias": "rudedude app",
+      "target_path": "projects/stock_trading/apps/rudedude.md",
+      "reason": "Common shorthand for the Rudedude app overview."
+    }
+  ]
+}

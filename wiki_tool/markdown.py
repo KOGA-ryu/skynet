@@ -146,6 +146,7 @@ def parse_links(
     text: str,
     known_paths: set[str],
     title_to_path: dict[str, str] | None = None,
+    alias_to_path: dict[str, str] | None = None,
 ) -> list[Link]:
     links: list[Link] = []
     in_fence = False
@@ -157,7 +158,12 @@ def parse_links(
             continue
         for match in MD_LINK_RE.finditer(line):
             label, raw_target = match.group(1), match.group(2)
-            target_path, resolved = resolve_markdown_target(path, raw_target, known_paths)
+            target_path, resolved = resolve_markdown_target(
+                path,
+                raw_target,
+                known_paths,
+                alias_to_path=alias_to_path or {},
+            )
             links.append(
                 Link(
                     source_doc_id=doc,
@@ -177,6 +183,7 @@ def parse_links(
                 raw_target,
                 known_paths,
                 title_to_path=title_to_path or {},
+                alias_to_path=alias_to_path or {},
             )
             links.append(
                 Link(
@@ -194,7 +201,11 @@ def parse_links(
 
 
 def resolve_markdown_target(
-    source_path: str, raw_target: str, known_paths: set[str]
+    source_path: str,
+    raw_target: str,
+    known_paths: set[str],
+    *,
+    alias_to_path: dict[str, str] | None = None,
 ) -> tuple[str | None, bool]:
     target = raw_target.strip()
     if is_external_target(target):
@@ -204,7 +215,13 @@ def resolve_markdown_target(
         return source_path, True
     base = PurePosixPath(source_path).parent
     normalized = str((base / target).as_posix())
-    return resolve_path_candidates(normalized, known_paths)
+    target_path, resolved = resolve_path_candidates(normalized, known_paths)
+    if resolved or not alias_to_path or is_path_like_alias_target(target):
+        return target_path, resolved
+    alias_target = alias_to_path.get(normalize_name(target))
+    if alias_target:
+        return alias_target, True
+    return target_path, resolved
 
 
 def resolve_wikilink_target(
@@ -212,6 +229,7 @@ def resolve_wikilink_target(
     known_paths: set[str],
     *,
     title_to_path: dict[str, str] | None = None,
+    alias_to_path: dict[str, str] | None = None,
 ) -> tuple[str | None, bool]:
     target = raw_target.strip()
     if not target:
@@ -221,6 +239,8 @@ def resolve_wikilink_target(
     normalized = normalize_name(target)
     if title_to_path and normalized in title_to_path:
         return title_to_path[normalized], True
+    if alias_to_path and normalized in alias_to_path:
+        return alias_to_path[normalized], True
     matches = [
         path
         for path in known_paths
@@ -228,6 +248,16 @@ def resolve_wikilink_target(
         or normalize_name(path) == normalized
     ]
     return (sorted(matches)[0], True) if matches else (None, False)
+
+
+def is_path_like_alias_target(target: str) -> bool:
+    return (
+        "/" in target
+        or "\\" in target
+        or "?" in target
+        or "#" in target
+        or PurePosixPath(target).suffix
+    )
 
 
 def resolve_path_candidates(path: str, known_paths: set[str]) -> tuple[str | None, bool]:

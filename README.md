@@ -38,6 +38,9 @@ python3 -m wiki_tool missing-notes audit --json
 python3 -m wiki_tool missing-notes bundle --output patch_bundles/missing_notes_preview.json --json
 python3 -m wiki_tool file-links audit --json
 python3 -m wiki_tool file-links bundle --output patch_bundles/file_links_preview.json --json
+python3 -m wiki_tool aliases validate --json
+python3 -m wiki_tool aliases list --json
+python3 -m wiki_tool aliases list --catalog --json
 python3 -m wiki_tool harness validate --json
 python3 -m wiki_tool harness answer "adapter boundary" --json
 python3 -m wiki_tool harness runs --json
@@ -60,6 +63,14 @@ Portable code references:
 }
 ```
 
+Alias maps:
+
+- Source-controlled wiki aliases live in `alias_maps/wiki_aliases.json`.
+- Aliases are read-layer only in v1. They improve scan-time resolution, search,
+  `refs`, and `open`; they do not rewrite NAS Markdown.
+- Keep aliases conservative. Do not add broad aliases when a shorthand could
+  reasonably point at multiple pages.
+
 Design rules:
 
 - Markdown on the NAS is canonical.
@@ -68,6 +79,7 @@ Design rules:
 - Template placeholder links are excluded from actionable broken-link counts.
 - Harness specs live in `harness_specs/` as Markdown with fenced YAML blocks.
 - Harness runs are persisted separately in `state/harness.sqlite`.
+- Alias maps are source-controlled read-layer metadata.
 - No mass frontmatter rollout.
 - No embeddings-first retrieval.
 - Multi-file edits should go through local patch bundles and backups before any

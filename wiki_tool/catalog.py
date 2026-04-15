@@ -9,9 +9,16 @@ from pathlib import Path, PurePosixPath
 import sqlite3
 from typing import Any
 
+from wiki_tool.aliases import (
+    DEFAULT_ALIAS_MAP,
+    alias_lookup,
+    aliases_as_dicts,
+    load_alias_entries,
+    validate_alias_entries,
+)
 from wiki_tool.ids import doc_id, digest, symbol_id
 from wiki_tool.markdown import infer_kind, normalize_name, parse_links, parse_spans, title_from_markdown
-from wiki_tool.models import Document, Link, ScanResult, Span, Symbol
+from wiki_tool.models import CatalogAlias, Document, Link, ScanResult, Span, Symbol
 
 
 DEFAULT_DB = Path("state/catalog.sqlite")
@@ -32,13 +39,39 @@ EXCLUDED_DIRS = {
 }
 
 
-def scan_wiki(root: Path, db_path: Path = DEFAULT_DB) -> ScanResult:
+def scan_wiki(
+    root: Path,
+    db_path: Path = DEFAULT_DB,
+    *,
+    alias_map_path: Path | None = None,
+) -> ScanResult:
     root = root.resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     docs = collect_documents(root)
     known_paths = {doc.path for doc in docs}
     known_targets = known_paths | collect_known_files(root)
     title_to_path = {normalize_name(doc.title): doc.path for doc in docs}
+    alias_entries = load_alias_entries(alias_map_path) if alias_map_path else []
+    alias_validation = validate_alias_entries(
+        alias_entries,
+        known_paths=known_paths,
+        title_to_path=title_to_path,
+    )
+    if not alias_validation["valid"]:
+        raise ValueError("; ".join(alias_validation["errors"]))
+    alias_to_path = alias_lookup(alias_entries)
+    aliases_by_path: dict[str, set[str]] = {}
+    for alias in alias_entries:
+        aliases_by_path.setdefault(alias.target_path, set()).add(alias.alias)
+    catalog_aliases = [
+        CatalogAlias(
+            alias=alias.alias,
+            normalized=alias.normalized,
+            target_path=alias.target_path,
+            reason=alias.reason,
+        )
+        for alias in alias_entries
+    ]
     spans: list[Span] = []
     links: list[Link] = []
     symbols: list[Symbol] = []
@@ -53,9 +86,10 @@ def scan_wiki(root: Path, db_path: Path = DEFAULT_DB) -> ScanResult:
                 text=doc.text,
                 known_paths=known_targets,
                 title_to_path=title_to_path,
+                alias_to_path=alias_to_path,
             )
         )
-        symbols.extend(symbols_for_document(doc, doc_spans))
+        symbols.extend(symbols_for_document(doc, doc_spans, aliases_by_path=aliases_by_path))
 
     broken_links = [link for link in links if not link.resolved]
     run_id = f"scan:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}:{digest(str(root))}"
@@ -67,6 +101,7 @@ def scan_wiki(root: Path, db_path: Path = DEFAULT_DB) -> ScanResult:
         spans=spans,
         links=links,
         symbols=symbols,
+        aliases=catalog_aliases,
     )
     return ScanResult(
         root=str(root),
@@ -125,7 +160,17 @@ def should_exclude(path: Path, root: Path) -> bool:
     return any(part in EXCLUDED_DIRS for part in rel_parts)
 
 
-def symbols_for_document(doc: Document, spans: list[Span]) -> list[Symbol]:
+def symbols_for_document(
+    doc: Document,
+    spans: list[Span],
+    *,
+    aliases_by_path: dict[str, set[str]] | None = None,
+) -> list[Symbol]:
+    doc_aliases = {
+        doc.title,
+        PurePosixPath(doc.path).stem.replace("_", " "),
+        *(aliases_by_path or {}).get(doc.path, set()),
+    }
     symbols = [
         Symbol(
             symbol_id=symbol_id("note", doc.title, doc.path),
@@ -134,7 +179,7 @@ def symbols_for_document(doc: Document, spans: list[Span]) -> list[Symbol]:
             path=doc.path,
             doc_id=doc.doc_id,
             span_id=None,
-            aliases=tuple(sorted({doc.title, PurePosixPath(doc.path).stem.replace("_", " ")})),
+            aliases=tuple(sorted(doc_aliases)),
         )
     ]
     for span in spans:
@@ -163,6 +208,7 @@ def write_catalog(
     spans: list[Span],
     links: list[Link],
     symbols: list[Symbol],
+    aliases: list[CatalogAlias],
 ) -> None:
     with sqlite3.connect(db_path) as con:
         con.execute("PRAGMA journal_mode=WAL")
@@ -174,6 +220,7 @@ def write_catalog(
             DELETE FROM spans;
             DELETE FROM links;
             DELETE FROM symbols;
+            DELETE FROM aliases;
             DELETE FROM documents_fts;
             DELETE FROM spans_fts;
             DELETE FROM symbols_fts;
@@ -227,6 +274,13 @@ def write_catalog(
                 }
                 for symbol in symbols
             ],
+        )
+        con.executemany(
+            """
+            INSERT INTO aliases(alias, normalized, target_path, reason)
+            VALUES (:alias, :normalized, :target_path, :reason)
+            """,
+            [asdict(alias) for alias in aliases],
         )
         con.executemany(
             "INSERT INTO documents_fts(doc_id, title, path, content) VALUES (?, ?, ?, ?)",
@@ -297,6 +351,12 @@ def create_schema(con: sqlite3.Connection) -> None:
             doc_id TEXT NOT NULL,
             span_id TEXT,
             aliases_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS aliases (
+            alias TEXT PRIMARY KEY,
+            normalized TEXT NOT NULL UNIQUE,
+            target_path TEXT NOT NULL,
+            reason TEXT NOT NULL
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
             doc_id UNINDEXED, title, path, content
@@ -373,6 +433,72 @@ def get_headings(db_path: Path, path: str) -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
+def alias_map_validation(
+    db_path: Path,
+    *,
+    alias_map_path: Path = DEFAULT_ALIAS_MAP,
+) -> dict[str, Any]:
+    entries = load_alias_entries(alias_map_path)
+    known_paths, title_to_path = catalog_paths_and_titles(db_path)
+    validation = validate_alias_entries(
+        entries,
+        known_paths=known_paths,
+        title_to_path=title_to_path,
+    )
+    return {
+        **validation,
+        "aliases": aliases_as_dicts(entries),
+        "path": str(alias_map_path),
+    }
+
+
+def list_aliases(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as con:
+        con.row_factory = sqlite3.Row
+        if not table_exists(con, "aliases"):
+            return []
+        rows = con.execute(
+            """
+            SELECT alias, normalized, target_path, reason
+            FROM aliases
+            ORDER BY alias
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def resolve_alias_path(db_path: Path, value: str) -> str | None:
+    normalized = normalize_name(value)
+    if not normalized:
+        return None
+    with sqlite3.connect(db_path) as con:
+        con.row_factory = sqlite3.Row
+        if not table_exists(con, "aliases"):
+            return None
+        row = con.execute(
+            "SELECT target_path FROM aliases WHERE normalized = ?",
+            (normalized,),
+        ).fetchone()
+        return str(row["target_path"]) if row else None
+
+
+def catalog_paths_and_titles(db_path: Path) -> tuple[set[str], dict[str, str]]:
+    with sqlite3.connect(db_path) as con:
+        con.row_factory = sqlite3.Row
+        rows = con.execute("SELECT path, title FROM documents ORDER BY path").fetchall()
+    paths = {str(row["path"]) for row in rows}
+    titles = {normalize_name(str(row["title"])): str(row["path"]) for row in rows}
+    return paths, titles
+
+
+def table_exists(con: sqlite3.Connection, table: str) -> bool:
+    row = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
 def find_references(db_path: Path, target: str) -> list[dict[str, Any]]:
     normalized = normalize_catalog_path(target)
     with sqlite3.connect(db_path) as con:
@@ -381,7 +507,11 @@ def find_references(db_path: Path, target: str) -> list[dict[str, Any]]:
             "SELECT path FROM documents WHERE path = ? OR doc_id = ?",
             (normalized, target),
         ).fetchone()
-        target_path = doc["path"] if doc else normalized
+        if doc:
+            target_path = doc["path"]
+        else:
+            alias_target = resolve_alias_path(db_path, target)
+            target_path = alias_target if alias_target else normalized
         rows = con.execute(
             """
             SELECT source_path, target_raw, target_path, label, link_kind, line
@@ -506,6 +636,16 @@ def open_path(
             """,
             (identifier, normalize_catalog_path(identifier), identifier, identifier),
         ).fetchone()
+        if row is None and table_exists(con, "aliases"):
+            row = con.execute(
+                """
+                SELECT target_path AS path
+                FROM aliases
+                WHERE normalized = ?
+                LIMIT 1
+                """,
+                (normalize_name(identifier),),
+            ).fetchone()
     if row is None:
         raise KeyError(f"No catalog object found for {identifier!r}")
     rel = row["path"]

@@ -7,15 +7,18 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from wiki_tool.aliases import DEFAULT_ALIAS_MAP, aliases_as_dicts, load_alias_entries
 from wiki_tool.catalog import (
     DEFAULT_DB,
     DEFAULT_WIKI_ROOT,
+    alias_map_validation,
     audit_summary,
     broken_link_categories,
     broken_links,
     find_references,
     gaps,
     get_headings,
+    list_aliases,
     open_path,
     query_catalog,
     scan_wiki,
@@ -62,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan", help="scan a Markdown wiki into the local catalog")
     add_json_flag(scan)
     scan.add_argument("--wiki-root", type=Path, default=DEFAULT_WIKI_ROOT)
+    scan.add_argument("--alias-map", type=Path, default=DEFAULT_ALIAS_MAP)
     scan.set_defaults(func=cmd_scan)
 
     find = sub.add_parser("find", help="search notes, headings, and symbol seeds")
@@ -145,6 +149,19 @@ def build_parser() -> argparse.ArgumentParser:
     file_links_bundle.add_argument("--output", type=Path, required=True)
     file_links_bundle.set_defaults(func=cmd_file_links_bundle)
 
+    aliases = sub.add_parser("aliases", help="wiki alias map helpers")
+    add_json_flag(aliases)
+    aliases_sub = aliases.add_subparsers(required=True)
+    aliases_validate = aliases_sub.add_parser("validate", help="validate the source alias map against the catalog")
+    add_json_flag(aliases_validate)
+    aliases_validate.add_argument("--alias-map", type=Path, default=DEFAULT_ALIAS_MAP)
+    aliases_validate.set_defaults(func=cmd_aliases_validate)
+    aliases_list = aliases_sub.add_parser("list", help="list source alias map entries")
+    add_json_flag(aliases_list)
+    aliases_list.add_argument("--alias-map", type=Path, default=DEFAULT_ALIAS_MAP)
+    aliases_list.add_argument("--catalog", action="store_true", help="list aliases stored in the current catalog")
+    aliases_list.set_defaults(func=cmd_aliases_list)
+
     explain = sub.add_parser("explain", help="explain the read-guard path for a query")
     add_json_flag(explain)
     explain.add_argument("query")
@@ -200,7 +217,7 @@ def add_json_flag(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_scan(args: argparse.Namespace) -> dict[str, Any]:
-    result = scan_wiki(root=args.wiki_root, db_path=args.db)
+    result = scan_wiki(root=args.wiki_root, db_path=args.db, alias_map_path=args.alias_map)
     return {"scan": result.__dict__}
 
 
@@ -310,6 +327,20 @@ def cmd_file_links_bundle(args: argparse.Namespace) -> dict[str, Any]:
         "target_count": len(bundle["targets"]),
         "valid": validation["valid"],
         "validation_errors": validation["errors"],
+    }
+
+
+def cmd_aliases_validate(args: argparse.Namespace) -> dict[str, Any]:
+    return alias_map_validation(args.db, alias_map_path=args.alias_map)
+
+
+def cmd_aliases_list(args: argparse.Namespace) -> dict[str, Any]:
+    if args.catalog:
+        return {"aliases": list_aliases(args.db), "source": "catalog"}
+    return {
+        "aliases": aliases_as_dicts(load_alias_entries(args.alias_map)),
+        "path": str(args.alias_map),
+        "source": "alias_map",
     }
 
 
@@ -426,6 +457,9 @@ def compact(value: Any) -> str:
             "new_label",
             "old_label",
             "repair_kind",
+            "normalized",
+            "target_path",
+            "reason",
         ]
         parts = [f"{key}={value[key]!r}" for key in preferred if key in value]
         return ", ".join(parts) if parts else json.dumps(value, sort_keys=True)

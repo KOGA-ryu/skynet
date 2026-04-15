@@ -51,6 +51,33 @@ class MarkdownParsingTests(unittest.TestCase):
         self.assertTrue(links[0].resolved)
         self.assertEqual(links[0].target_path, "dev://RD_UI/qml/Main.qml")
 
+    def test_aliases_resolve_wikilinks_and_unqualified_markdown_targets(self) -> None:
+        doc = doc_id("index.md")
+        links = parse_links(
+            doc=doc,
+            path="index.md",
+            text="[[Scanner App]] and [Scanner](scanner-app)",
+            known_paths={"projects/stock_trading/apps/scanner.md"},
+            alias_to_path={"scannerapp": "projects/stock_trading/apps/scanner.md"},
+        )
+        self.assertEqual([link.resolved for link in links], [True, True])
+        self.assertEqual(
+            [link.target_path for link in links],
+            ["projects/stock_trading/apps/scanner.md", "projects/stock_trading/apps/scanner.md"],
+        )
+
+    def test_aliases_do_not_resolve_path_like_markdown_targets(self) -> None:
+        doc = doc_id("index.md")
+        links = parse_links(
+            doc=doc,
+            path="index.md",
+            text="[Scanner](missing/scanner-app)",
+            known_paths={"projects/stock_trading/apps/scanner.md"},
+            alias_to_path={"scannerapp": "projects/stock_trading/apps/scanner.md"},
+        )
+        self.assertFalse(links[0].resolved)
+        self.assertEqual(links[0].target_path, "missing/scanner-app")
+
 
 if __name__ == "__main__":
     unittest.main()

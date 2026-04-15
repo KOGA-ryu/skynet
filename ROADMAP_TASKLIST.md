@@ -14,14 +14,16 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
-- [x] Latest scan run: `scan:20260415T075527Z:0fefcc4701a65cde`.
+- [x] Latest scan run: `scan:20260415T082125Z:0fefcc4701a65cde`.
 - [x] Latest harness run: `run:20260415T080335Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `6a592ab` (`Initial wiki usability tooling
   checkpoint`).
-- [ ] Current active task: add alias maps for renamed notes and project
-  shorthand.
+- [ ] Current active task: add per-project backlink, orphan, and missing-hub
+  reports.
+- [x] Alias map implementation status: complete, with 6 validated source
+  aliases.
 - [ ] Deferred environment task: Windows PC access is tapped off until the
   machine direction is settled, likely after a Linux conversion.
 
@@ -97,7 +99,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [ ] Configure Windows or Linux PC dev root after the desktop environment is
   finalized.
 - [ ] Test `dev://` opening behavior on the future PC environment.
-- [ ] Add alias maps for renamed notes and project shorthand.
+- [x] Add alias maps for renamed notes and project shorthand.
 - [ ] Add per-project backlink reports.
 - [ ] Add orphan-note reports.
 - [ ] Add missing-hub-page reports.
@@ -218,16 +220,16 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add alias maps for renamed notes and project shorthand.
-2. [ ] Add per-project backlink, orphan, and missing-hub reports.
-3. [ ] Add patch-bundle rollback and bundle report commands.
-4. [ ] Add a single health command for scan, audit, harness validation, and
+1. [ ] Add per-project backlink, orphan, and missing-hub reports.
+2. [ ] Add patch-bundle rollback and bundle report commands.
+3. [ ] Add a single health command for scan, audit, harness validation, and
    unit tests.
-5. [ ] Add structured-output LLM adapter behind the harness synthesis step.
-6. [ ] Add failure-taxonomy retry and fallback behavior.
-7. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
-8. [ ] Build eval runner and recurring retrieval quality report.
-9. [ ] Add the first bounded knowledge API surface.
+4. [ ] Add structured-output LLM adapter behind the harness synthesis step.
+5. [ ] Add failure-taxonomy retry and fallback behavior.
+6. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
+7. [ ] Build eval runner and recurring retrieval quality report.
+8. [ ] Add the first bounded knowledge API surface.
+9. [ ] Add install/setup instructions.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -255,6 +257,8 @@ Link queues:
 python3 -m wiki_tool devrefs audit --json
 python3 -m wiki_tool missing-notes audit --json
 python3 -m wiki_tool file-links audit --json
+python3 -m wiki_tool aliases validate --json
+python3 -m wiki_tool aliases list --json
 ```
 
 Patch bundles:

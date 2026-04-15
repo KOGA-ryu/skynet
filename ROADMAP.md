@@ -33,7 +33,8 @@ Goal: turn audit output into a practical cleanup queue.
 
 Status: portable `dev://` references implemented and applied to the NAS.
 Missing Markdown note stubs have also been generated from the catalog and
-applied to the NAS.
+applied to the NAS. Conservative read-layer aliases are implemented for common
+project shorthand.
 
 - Triage unresolved links by category:
   - `missing_markdown_note`
@@ -63,6 +64,7 @@ python3 -m wiki_tool missing-notes audit --json
 python3 -m wiki_tool missing-notes bundle --output patch_bundles/missing_notes_preview.json --json
 python3 -m wiki_tool file-links audit --json
 python3 -m wiki_tool file-links bundle --output patch_bundles/file_links_preview.json --json
+python3 -m wiki_tool aliases validate --json
 python3 -m wiki_tool patch-bundle apply patch_bundles/devrefs_preview.json --wiki-root /Volumes/wiki --dry-run --json
 python3 -m wiki_tool refs concepts/scanner_evidence_and_snapshot_replay.md
 ```
