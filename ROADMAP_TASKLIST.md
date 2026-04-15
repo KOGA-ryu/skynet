@@ -18,7 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T080335Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `632c213` (`Add patch bundle reports and rollback`).
+- [x] Latest source checkpoint: `1fcdafa` (`Add wiki health command`).
 - [ ] Current active task: add structured-output LLM adapter behind the harness
   synthesis step.
 - [x] Project report implementation status: complete, with 7 top-level projects
