@@ -14,13 +14,13 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
-- [x] Latest scan run: `scan:20260415T082125Z:0fefcc4701a65cde`.
+- [x] Latest scan run: `scan:20260415T084300Z:0fefcc4701a65cde`.
 - [x] Latest harness run: `run:20260415T080335Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `632c213` (`Add patch bundle reports and rollback`).
-- [ ] Current active task: add a single health command for scan, audit, harness
-  validation, and unit tests.
+- [ ] Current active task: add structured-output LLM adapter behind the harness
+  synthesis step.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -75,7 +75,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Verify current audit passes with zero actionable broken links.
 - [ ] Add stale-scan detection when the NAS has changed after the last catalog
   build.
-- [ ] Add a single health command that runs scan, audit, harness validation, and
+- [x] Add a single health command that runs scan, audit, harness validation, and
   unit tests.
 - [ ] Add optional scheduled scan/audit runner.
 
@@ -214,24 +214,24 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Verify one live harness run passes.
 - [x] Create first git commit checkpoint: `6a592ab`.
 - [ ] Add install/setup instructions.
-- [ ] Add a single smoke-test command.
+- [x] Add a single smoke-test command.
 - [ ] Add backup restore docs.
 - [ ] Add package entry point if CLI use becomes frequent.
 - [ ] Add release notes for the first usable build.
 
 ## Next 10 Tasks
 
-1. [ ] Add a single health command for scan, audit, harness validation, and
-   unit tests.
-2. [ ] Add structured-output LLM adapter behind the harness synthesis step.
-3. [ ] Add failure-taxonomy retry and fallback behavior.
-4. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
-5. [ ] Build eval runner and recurring retrieval quality report.
-6. [ ] Add the first bounded knowledge API surface.
-7. [ ] Add install/setup instructions.
-8. [ ] Add page quality reports for thin notes, missing summaries, and unclear
+1. [ ] Add structured-output LLM adapter behind the harness synthesis step.
+2. [ ] Add failure-taxonomy retry and fallback behavior.
+3. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
+4. [ ] Build eval runner and recurring retrieval quality report.
+5. [ ] Add the first bounded knowledge API surface.
+6. [ ] Add install/setup instructions.
+7. [ ] Add page quality reports for thin notes, missing summaries, and unclear
    hub pages.
-9. [ ] Add richer bundle schema docs.
+8. [ ] Add richer bundle schema docs.
+9. [ ] Add preflight check that refuses writes when catalog root and bundle root
+   disagree.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -239,9 +239,7 @@ as tasks move from planned work into implemented, verified tooling.
 Health:
 
 ```bash
-python3 -m wiki_tool scan --wiki-root /Volumes/wiki --json
-python3 -m wiki_tool audit --json
-python3 -m unittest discover -s tests
+python3 -m wiki_tool health --wiki-root /Volumes/wiki --json
 ```
 
 Harness:

@@ -12,6 +12,12 @@ Defaults:
 
 Active build tracker: [ROADMAP_TASKLIST.md](ROADMAP_TASKLIST.md)
 
+Run the full local health checkpoint:
+
+```bash
+python3 -m wiki_tool health --json
+```
+
 Run a read-only scan:
 
 ```bash
@@ -26,6 +32,7 @@ python3 -m wiki_tool refs concepts/retrieval.md
 python3 -m wiki_tool headings projects/stock_trading/README.md
 python3 -m wiki_tool broken-links --limit 25
 python3 -m wiki_tool audit --write
+python3 -m wiki_tool health --json
 python3 -m wiki_tool explain "adapter boundary"
 python3 -m wiki_tool open projects/stock_trading/apps/scanner.md --platform windows
 python3 -m wiki_tool project-reports summary --json

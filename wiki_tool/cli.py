@@ -40,6 +40,7 @@ from wiki_tool.harness import (
     run_answer_with_citations,
     validate_harness_specs,
 )
+from wiki_tool.health import DEFAULT_TESTS_DIR, run_health
 from wiki_tool.missing_notes import build_missing_notes_patch_bundle, missing_note_audit
 from wiki_tool.patch_bundle import (
     apply_patch_bundle,
@@ -65,6 +66,9 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(1) from exc
     if payload is not None:
         print_payload(payload, json_output=args.json)
+    if getattr(args, "exit_fail_on_status", False) and isinstance(payload, dict):
+        if payload.get("status") == "fail":
+            raise SystemExit(1)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -124,6 +128,14 @@ def build_parser() -> argparse.ArgumentParser:
     add_json_flag(audit)
     audit.add_argument("--write", action="store_true", help="write a local audit markdown report")
     audit.set_defaults(func=cmd_audit)
+
+    health = sub.add_parser("health", help="run scan, audit, harness validation, and unit tests")
+    add_json_flag(health)
+    health.add_argument("--wiki-root", type=Path, default=DEFAULT_WIKI_ROOT)
+    health.add_argument("--alias-map", type=Path, default=DEFAULT_ALIAS_MAP)
+    health.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
+    health.add_argument("--tests-dir", type=Path, default=DEFAULT_TESTS_DIR)
+    health.set_defaults(func=cmd_health, exit_fail_on_status=True)
 
     open_cmd = sub.add_parser("open", help="translate a catalog identifier to a platform path")
     add_json_flag(open_cmd)
@@ -304,6 +316,16 @@ def cmd_audit(args: argparse.Namespace) -> dict[str, Any]:
         path.write_text(render_audit(summary))
         summary["written_report"] = str(path)
     return summary
+
+
+def cmd_health(args: argparse.Namespace) -> dict[str, Any]:
+    return run_health(
+        wiki_root=args.wiki_root,
+        db_path=args.db,
+        alias_map_path=args.alias_map,
+        spec_dir=args.spec_dir,
+        tests_dir=args.tests_dir,
+    )
 
 
 def cmd_open(args: argparse.Namespace) -> dict[str, Any]:
