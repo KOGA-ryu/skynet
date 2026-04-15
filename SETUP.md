@@ -75,6 +75,7 @@ python3 -m wiki_tool eval run --limit 3 --json
 python3 -m wiki_tool source-shelves summary --json
 python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/source_shelves_math_bridge_map.json --json
 python3 -m wiki_tool source-shelves bridge-bundle computer --output patch_bundles/source_shelves_computer_project_bridge_map.json --json
+python3 -m wiki_tool page-quality stub-fill-queue --limit 25 --json
 python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method":"symbol.search","params":{"query":"adapter boundary","limit":3}}' --json
 ```
 

@@ -67,6 +67,7 @@ from wiki_tool.page_quality import (
     generated_stubs_report,
     missing_summaries_report,
     page_quality_summary,
+    stub_fill_queue,
     thin_notes_report,
     unclear_hubs_report,
     write_page_quality_reports,
@@ -220,6 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     page_quality_stubs = page_quality_sub.add_parser("stubs", help="list generated stubs needing human content")
     add_json_flag(page_quality_stubs)
     page_quality_stubs.set_defaults(func=cmd_page_quality_stubs)
+    page_quality_stub_fill = page_quality_sub.add_parser("stub-fill-queue", help="rank generated stubs for human fill work")
+    add_json_flag(page_quality_stub_fill)
+    page_quality_stub_fill.add_argument("--limit", type=int)
+    page_quality_stub_fill.set_defaults(func=cmd_page_quality_stub_fill_queue)
     page_quality_write = page_quality_sub.add_parser("write", help="write local Markdown page quality reports")
     add_json_flag(page_quality_write)
     page_quality_write.add_argument("--output-dir", type=Path, default=DEFAULT_PAGE_QUALITY_DIR)
@@ -567,6 +572,10 @@ def cmd_page_quality_unclear_hubs(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_page_quality_stubs(args: argparse.Namespace) -> dict[str, Any]:
     return generated_stubs_report(args.db)
+
+
+def cmd_page_quality_stub_fill_queue(args: argparse.Namespace) -> dict[str, Any]:
+    return stub_fill_queue(args.db, limit=args.limit)
 
 
 def cmd_page_quality_write(args: argparse.Namespace) -> dict[str, Any]:

@@ -40,6 +40,8 @@ APIs.
   for books and OSS pattern notes in the local mirror.
 - Page-quality queues include a focused generated-stub report for placeholder
   Markdown pages that still need human-written content.
+- Stub-fill queues rank generated stubs and write local evidence packets for
+  human promotion work without replacing stub content.
 - Patch bundles provide the guarded path for NAS edits with validation, dry-run
   summaries, backups, manifests, reports, and rollback.
 - Portable `dev://<repo>/<path>` references work for the Mac dev root and are
@@ -123,6 +125,7 @@ python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundl
 python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/source_shelves_math_bridge_map.json --json
 python3 -m wiki_tool source-shelves bridge-bundle computer --output patch_bundles/source_shelves_computer_project_bridge_map.json --json
 python3 -m wiki_tool page-quality stubs --json
+python3 -m wiki_tool page-quality stub-fill-queue --limit 25 --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 ```
 
@@ -141,8 +144,8 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method
   only after that environment is known.
 - Scheduled audits have a command-only runner. Installing a cron, launchd, or
   systemd timer is still deferred until the review cadence is chosen.
-- Generated stub pages still need a promotion queue after the focused
-  human-content report.
+- Generated stub pages now have a local promotion queue and evidence packets;
+  replacing stub content remains a separate reviewed patch-bundle pass.
 - Math source notes now have a generated book-to-concept bridge bundle for
   local-mirror staging.
 - Computer-science source notes now have a generated source-to-project bridge

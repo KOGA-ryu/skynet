@@ -10,6 +10,7 @@ from typing import Any
 
 
 DEFAULT_PAGE_QUALITY_DIR = Path("state/page_quality")
+DEFAULT_STUB_FILL_PACKET_DIR_NAME = "stub_fill_packets"
 THIN_WORD_LIMIT = 120
 THIN_BYTE_LIMIT = 800
 SUMMARY_WORD_LIMIT = 25
@@ -48,6 +49,18 @@ def generated_stubs_report(db_path: Path) -> dict[str, Any]:
     }
 
 
+def stub_fill_queue(
+    db_path: Path,
+    *,
+    limit: int | None = None,
+    output_dir: Path = DEFAULT_PAGE_QUALITY_DIR,
+) -> dict[str, Any]:
+    if limit is not None and limit < 0:
+        raise ValueError("limit must be greater than or equal to 0")
+    report = build_page_quality_report(db_path)
+    return build_stub_fill_queue(report, limit=limit, output_dir=output_dir)
+
+
 def thin_notes_report(db_path: Path) -> dict[str, Any]:
     report = build_page_quality_report(db_path)
     return {
@@ -84,6 +97,8 @@ def write_page_quality_reports(
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     report = build_page_quality_report(db_path)
+    stub_queue = build_stub_fill_queue(report, output_dir=output_dir)
+    packet_dir = output_dir / DEFAULT_STUB_FILL_PACKET_DIR_NAME
     files = {
         "README.md": render_index_markdown(report),
         "thin_notes.md": render_candidates_markdown(
@@ -97,6 +112,7 @@ def write_page_quality_reports(
             intro="Notes whose opening summary is missing, very short, or still stub-like.",
         ),
         "generated_stubs.md": render_generated_stubs_markdown(report["generated_stubs"]),
+        "stub_fill_queue.md": render_stub_fill_queue_markdown(stub_queue),
         "unclear_hubs.md": render_candidates_markdown(
             "Unclear Hubs",
             report["unclear_hubs"],
@@ -108,12 +124,20 @@ def write_page_quality_reports(
         path = output_dir / filename
         path.write_text(text)
         written.append(str(path))
+    packet_dir.mkdir(parents=True, exist_ok=True)
+    for entry in stub_queue["queue"]:
+        packet_path = Path(str(entry["packet_path"]))
+        packet_path.parent.mkdir(parents=True, exist_ok=True)
+        packet_path.write_text(render_stub_fill_packet_markdown(entry))
+        written.append(str(packet_path))
     return {
         "file_count": len(written),
         "files": written,
         "generated_stub_count": len(report["generated_stubs"]),
         "missing_summary_count": len(report["missing_summaries"]),
         "output_dir": str(output_dir),
+        "stub_fill_packet_count": len(stub_queue["queue"]),
+        "stub_fill_queue_path": str(output_dir / "stub_fill_queue.md"),
         "thin_note_count": len(report["thin_notes"]),
         "unclear_hub_count": len(report["unclear_hubs"]),
     }
@@ -246,6 +270,103 @@ def generated_stub_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "title": entry["title"],
         "word_count": entry["word_count"],
     }
+
+
+def build_stub_fill_queue(
+    report: dict[str, Any],
+    *,
+    limit: int | None = None,
+    output_dir: Path = DEFAULT_PAGE_QUALITY_DIR,
+) -> dict[str, Any]:
+    packet_dir = output_dir / DEFAULT_STUB_FILL_PACKET_DIR_NAME
+    entries = sorted(
+        [stub_fill_entry(stub, packet_dir=packet_dir) for stub in report["generated_stubs"]],
+        key=stub_fill_sort_key,
+    )
+    for rank, entry in enumerate(entries, start=1):
+        entry["rank"] = rank
+    queue = entries if limit is None else entries[:limit]
+    return {
+        "generated_at_utc": report["generated_at_utc"],
+        "limit": limit,
+        "priority_counts": priority_counts(entries),
+        "queue": queue,
+        "queue_count": len(queue),
+        "stub_count": len(entries),
+        "total_inbound_references": sum(int(entry["inbound_count"]) for entry in entries),
+    }
+
+
+def stub_fill_entry(stub: dict[str, Any], *, packet_dir: Path) -> dict[str, Any]:
+    path = str(stub["path"])
+    entry = {
+        "byte_size": int(stub["byte_size"]),
+        "group": stub_group(path),
+        "inbound_count": int(stub["inbound_count"]),
+        "inbound_sources": stub["inbound_sources"],
+        "packet_path": str(packet_dir / stub_packet_filename(path)),
+        "path": path,
+        "priority": stub_fill_priority(stub),
+        "rank": 0,
+        "reasons": list(stub["reasons"]),
+        "source_count": int(stub["source_count"]),
+        "suggested_next_action": stub["suggested_next_action"],
+        "title": stub["title"],
+        "word_count": int(stub["word_count"]),
+    }
+    return entry
+
+
+def stub_fill_priority(stub: dict[str, Any]) -> str:
+    path = str(stub["path"])
+    inbound_count = int(stub["inbound_count"])
+    source_count = int(stub["source_count"])
+    if is_hub_path(path) or inbound_count >= 5 or source_count >= 3:
+        return "P0"
+    if inbound_count >= 2 or source_count >= 2:
+        return "P1"
+    return "P2"
+
+
+def stub_fill_sort_key(entry: dict[str, Any]) -> tuple[int, int, int, int, str]:
+    priority_order = {"P0": 0, "P1": 1, "P2": 2}
+    return (
+        priority_order.get(str(entry["priority"]), 9),
+        -int(entry["inbound_count"]),
+        -int(entry["source_count"]),
+        0 if is_hub_path(str(entry["path"])) else 1,
+        str(entry["path"]),
+    )
+
+
+def priority_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for entry in entries:
+        counts[str(entry["priority"])] += 1
+    return dict(sorted(counts.items()))
+
+
+def stub_group(path: str) -> str:
+    parts = PurePosixPath(path).parts
+    if len(parts) >= 4 and parts[0] == "projects" and parts[2] == "apps":
+        return "/".join(parts[:4])
+    if len(parts) >= 2 and parts[0] == "projects":
+        return "/".join(parts[:2])
+    if parts and parts[0] == "concepts":
+        return "concepts"
+    if len(parts) >= 2 and parts[0] == "sources":
+        return "/".join(parts[:2])
+    if parts:
+        return parts[0]
+    return "unknown"
+
+
+def stub_packet_filename(path: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "__", path)
+    safe = safe.replace("/", "__")
+    if safe.endswith(".md"):
+        safe = safe[:-3]
+    return f"{safe}.md"
 
 
 def candidate_reasons(entry: dict[str, Any]) -> list[str]:
@@ -444,6 +565,7 @@ def render_index_markdown(report: dict[str, Any]) -> str:
         "- [Thin Notes](thin_notes.md)",
         "- [Missing Summaries](missing_summaries.md)",
         "- [Generated Stubs](generated_stubs.md)",
+        "- [Stub-Fill Queue](stub_fill_queue.md)",
         "- [Unclear Hubs](unclear_hubs.md)",
         "",
     ]
@@ -525,6 +647,126 @@ def render_generated_stubs_markdown(stubs: list[dict[str, Any]]) -> str:
             lines.append("- no inbound sources")
         lines.append("")
     return "\n".join(lines)
+
+
+def render_stub_fill_queue_markdown(queue: dict[str, Any]) -> str:
+    lines = [
+        "# Stub-Fill Queue",
+        "",
+        "Ranked generated stubs that need human-written promotion packets before content replacement.",
+        "",
+        f"- generated_at_utc: `{queue['generated_at_utc']}`",
+        f"- stub_count: `{queue['stub_count']}`",
+        f"- queue_count: `{queue['queue_count']}`",
+        f"- total_inbound_references: `{queue['total_inbound_references']}`",
+        "",
+        "## Priority Counts",
+        "",
+        "| priority | stubs |",
+        "|---|---:|",
+    ]
+    for priority, count in queue["priority_counts"].items():
+        lines.append(f"| `{priority}` | {count} |")
+    if not queue["priority_counts"]:
+        lines.append("| none | 0 |")
+
+    lines.extend(
+        [
+            "",
+            "## Queue",
+            "",
+            "| rank | priority | path | group | inbound | sources | packet | next action |",
+            "|---:|---|---|---|---:|---:|---|---|",
+        ]
+    )
+    if not queue["queue"]:
+        lines.append("| 0 | none | none | none | 0 | 0 | none | none |")
+    for entry in queue["queue"]:
+        lines.append(
+            "| {rank} | `{priority}` | {path} | `{group}` | {inbound} | {sources} | {packet} | {action} |".format(
+                action=escape_table(str(entry["suggested_next_action"])),
+                group=escape_table(str(entry["group"])),
+                inbound=entry["inbound_count"],
+                packet=escape_table(f"[packet]({relative_report_link(str(entry['packet_path']))})"),
+                path=escape_table(f"`{entry['path']}`"),
+                priority=entry["priority"],
+                rank=entry["rank"],
+                sources=entry["source_count"],
+            )
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_stub_fill_packet_markdown(entry: dict[str, Any]) -> str:
+    lines = [
+        f"# Stub-Fill Packet: {entry['title']}",
+        "",
+        f"- rank: `{entry['rank']}`",
+        f"- priority: `{entry['priority']}`",
+        f"- path: `{entry['path']}`",
+        f"- group: `{entry['group']}`",
+        f"- inbound_count: `{entry['inbound_count']}`",
+        f"- source_count: `{entry['source_count']}`",
+        f"- word_count: `{entry['word_count']}`",
+        f"- byte_size: `{entry['byte_size']}`",
+        f"- reasons: `{', '.join(entry['reasons'])}`",
+        "",
+        "## Fill Checklist",
+        "",
+        "- Replace generated-stub wording with a direct opening summary.",
+        "- Explain what the page is for and when it should be used.",
+        "- Preserve useful inbound intent from the source links below.",
+        "- Add decisions, evidence, or links only when supported by existing wiki context.",
+        "- Keep NAS promotion behind the reviewed patch-bundle workflow.",
+        "",
+        "## Inbound Sources",
+        "",
+    ]
+    if entry["inbound_sources"]:
+        for source in entry["inbound_sources"]:
+            labels = ", ".join(str(label) for label in source["labels"])
+            lines.append(
+                "- `{source_path}` lines `{lines}` labels `{labels}`".format(
+                    labels=labels,
+                    lines=", ".join(str(line) for line in source["lines"]),
+                    source_path=source["source_path"],
+                )
+            )
+    else:
+        lines.append("- no inbound sources")
+    lines.extend(
+        [
+            "",
+            "## Replacement Scaffold",
+            "",
+            f"# {entry['title']}",
+            "",
+            "<write a specific opening summary from the inbound context>",
+            "",
+            "## Purpose",
+            "",
+            "<state what this page should help the wiki user understand or do>",
+            "",
+            "## Key Details",
+            "",
+            "- <supported detail>",
+            "- <supported detail>",
+            "",
+            "## Related Links",
+            "",
+            "- <add only validated wiki links>",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def relative_report_link(path: str) -> str:
+    parts = PurePosixPath(path).parts
+    if len(parts) >= 3 and parts[-2] == DEFAULT_STUB_FILL_PACKET_DIR_NAME:
+        return f"{DEFAULT_STUB_FILL_PACKET_DIR_NAME}/{parts[-1]}"
+    return path
 
 
 def escape_table(value: str) -> str:

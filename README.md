@@ -76,6 +76,7 @@ python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality thin --json
 python3 -m wiki_tool page-quality missing-summaries --json
 python3 -m wiki_tool page-quality stubs --json
+python3 -m wiki_tool page-quality stub-fill-queue --limit 25 --json
 python3 -m wiki_tool page-quality unclear-hubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 python3 -m wiki_tool devrefs audit --json
@@ -176,6 +177,9 @@ Page quality reports:
   pages for librarian review.
 - `page-quality stubs` isolates generated stub pages that still need
   human-written content.
+- `page-quality stub-fill-queue` ranks generated stubs for human fill work and
+  `page-quality write` emits local packet files under
+  `state/page_quality/stub_fill_packets/`.
 - Markdown report writes are local-only under ignored `state/page_quality/`;
   they do not edit NAS Markdown.
 
