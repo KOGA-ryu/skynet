@@ -15,6 +15,8 @@ Active build tracker: [ROADMAP_TASKLIST.md](ROADMAP_TASKLIST.md)
 
 Setup guide: [SETUP.md](SETUP.md)
 
+First usable build notes: [RELEASE_NOTES.md](RELEASE_NOTES.md)
+
 Patch-bundle schema: [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md)
 
 Backup restore guide: [BACKUP_RESTORE.md](BACKUP_RESTORE.md)
