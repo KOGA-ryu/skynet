@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from contextlib import closing
 from datetime import UTC, datetime
 import posixpath
 from pathlib import Path, PurePosixPath
-import sqlite3
 from typing import Any
 
-from wiki_tool.catalog import broken_links, collect_known_files
+from wiki_tool.catalog import broken_links, collect_known_files, latest_scan_run
 
 
 DEFAULT_RUDEDUDE_REPO = "rudedude"
@@ -102,6 +100,7 @@ def build_file_links_patch_bundle(
         "created_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "rationale": "Repair non-Markdown wiki links by using valid wiki-relative targets or portable dev:// references.",
         "skipped": skipped,
+        "source_catalog": source_catalog_metadata(db_path),
         "targets": [
             {
                 "line": candidate["line"],
@@ -121,9 +120,18 @@ def build_file_links_patch_bundle(
 
 
 def scan_root(db_path: Path) -> Path | None:
-    with closing(sqlite3.connect(db_path)) as con:
-        row = con.execute("SELECT root FROM scan_runs LIMIT 1").fetchone()
-    return Path(row[0]) if row and row[0] else None
+    run = latest_scan_run(db_path)
+    return Path(str(run["root"])) if run and run.get("root") else None
+
+
+def source_catalog_metadata(db_path: Path) -> dict[str, Any]:
+    run = latest_scan_run(db_path)
+    return {
+        "db_path": str(db_path),
+        "root": run.get("root") if run else None,
+        "run_id": run.get("run_id") if run else None,
+        "scanned_at_utc": run.get("scanned_at_utc") if run else None,
+    }
 
 
 def is_rudedude_code_row(row: dict[str, Any]) -> bool:

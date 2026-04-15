@@ -600,6 +600,7 @@ def cmd_patch_apply(args: argparse.Namespace) -> dict[str, Any]:
         args.path,
         wiki_root=args.wiki_root,
         backup_dir=args.backup_dir,
+        catalog_db=args.db,
         dry_run=args.dry_run,
     )
 

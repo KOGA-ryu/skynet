@@ -36,6 +36,12 @@ Envelope skeleton:
   "bundle_id": "bundle:example:20260415T000000Z",
   "created_at_utc": "2026-04-15T00:00:00+00:00",
   "rationale": "Repair wiki links through reviewed, reversible edits.",
+  "source_catalog": {
+    "db_path": "state/catalog.sqlite",
+    "root": "/Volumes/wiki",
+    "run_id": "scan:20260415T000000Z:example",
+    "scanned_at_utc": "2026-04-15T00:00:00+00:00"
+  },
   "targets": []
 }
 ```
@@ -43,6 +49,11 @@ Envelope skeleton:
 `backup_manifest` is required in the bundle. The actual applied manifest is
 written only after `patch-bundle apply` succeeds without `--dry-run`. Real
 bundles must use a non-empty `targets` array.
+
+`source_catalog` is optional for legacy bundles, but current bundle generators
+write it from the active catalog scan. Real applies refuse to write when
+`source_catalog.root` or the active catalog database root does not match the
+requested `--wiki-root`.
 
 ## Common Target Fields
 
@@ -177,6 +188,21 @@ Safety behavior:
 - Validation fails if the target file already exists when `--wiki-root` is supplied.
 - Apply refuses to overwrite an existing file.
 
+## Write Root Preflight
+
+Patch bundles are relative-path write plans, so the tool verifies the root they
+were planned against before any real apply:
+
+- Generated bundles include `source_catalog.root`, `source_catalog.run_id`, and
+  `source_catalog.scanned_at_utc`.
+- The CLI also checks the active catalog database selected by global `--db`
+  against the requested `--wiki-root`.
+- A real apply fails if either checked root differs from `--wiki-root`.
+- A dry run still validates targets and reports `preflight.status: "mismatch"`
+  without writing.
+- This prevents a mirror-built or stale catalog from silently writing to a
+  different tree.
+
 ## Applied Manifest
 
 When a real apply succeeds, the tool writes:
@@ -234,6 +260,11 @@ Apply after review:
 ```bash
 python3 -m wiki_tool patch-bundle apply patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --json
 ```
+
+Real applies run a root-agreement preflight. If the active catalog was built
+from `state/wiki_mirror`, an apply to `/Volumes/wiki` is blocked until the
+catalog is rebuilt from `/Volumes/wiki` or the bundle is regenerated from a
+matching catalog. Dry runs report the mismatch without writing.
 
 Inspect an applied manifest:
 

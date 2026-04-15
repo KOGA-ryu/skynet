@@ -14,13 +14,14 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
-- [x] Latest scan run: `scan:20260415T100809Z:f4351838b68707a7`.
-- [x] Latest harness run: `run:20260415T100815Z:838b2e4cc6371c4c`.
+- [x] Latest scan run: `scan:20260415T101814Z:f4351838b68707a7`.
+- [x] Latest harness run: `run:20260415T101814Z:838b2e4cc6371c4c`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `8f073d2` (`Keep mirror guard marker outside sync root`).
-- [ ] Current active task: add preflight check that refuses writes when catalog
-  root and bundle root disagree.
+- [ ] Current active task: tighten contract and schema validation.
+- [x] Root preflight implementation status: complete; real applies now require
+  bundle/catalog roots to match `--wiki-root`.
 - [x] Local mirror status: complete, with `state/wiki_mirror/` refreshed from
   the NAS and heavy stock-trading payloads excluded.
 - [x] Project report implementation status: complete, with 7 top-level projects
@@ -124,7 +125,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Add rollback command that can restore files from a bundle manifest.
 - [x] Add bundle report command that summarizes changed files and target types.
 - [x] Add richer bundle schema docs.
-- [ ] Add preflight check that refuses writes when catalog root and bundle root
+- [x] Add preflight check that refuses writes when catalog root and bundle root
   disagree.
 
 ## Phase 4: Executable Harness Layer
@@ -224,16 +225,16 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add preflight check that refuses writes when catalog root and bundle root
-   disagree.
-2. [ ] Tighten contract and schema validation.
-3. [ ] Add trace diffing between harness runs.
-4. [ ] Add backup restore docs.
-5. [ ] Add broken-link regression scoring to eval reports.
-6. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
-7. [ ] Add release notes for the first usable build.
-8. [ ] Build a report of generated stubs that still need human content.
-9. [ ] Add project-level librarian reports.
+1. [ ] Tighten contract and schema validation.
+2. [ ] Add trace diffing between harness runs.
+3. [ ] Add backup restore docs.
+4. [ ] Add broken-link regression scoring to eval reports.
+5. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
+6. [ ] Add release notes for the first usable build.
+7. [ ] Build a report of generated stubs that still need human content.
+8. [ ] Add project-level librarian reports.
+9. [ ] Add stale-scan detection when the NAS has changed after the last catalog
+   build.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands

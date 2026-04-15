@@ -8,6 +8,8 @@ import json
 import re
 from typing import Any
 
+from wiki_tool.catalog import latest_scan_run
+
 
 REQUIRED_KEYS = {"bundle_id", "created_at_utc", "targets", "rationale", "backup_manifest"}
 
@@ -50,12 +52,19 @@ def apply_patch_bundle(
     *,
     wiki_root: Path,
     backup_dir: Path,
+    catalog_db: Path | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     payload = json.loads(path.read_text())
     validation = validate_patch_bundle(path, wiki_root=wiki_root)
     if not validation["valid"]:
         raise ValueError("; ".join(validation["errors"]))
+    preflight = patch_write_preflight(
+        payload,
+        wiki_root=wiki_root,
+        catalog_db=catalog_db,
+        require_match=not dry_run,
+    )
 
     targets = payload["targets"]
     supported = {"replace_link_target", "replace_markdown_link", "create_markdown_stub"}
@@ -178,6 +187,7 @@ def apply_patch_bundle(
         "file_count": len(file_summaries),
         "files": file_summaries,
         "manifest_path": str(manifest_path),
+        "preflight": preflight,
         "target_count": len(targets),
         "would_write": not dry_run,
     }
@@ -281,6 +291,7 @@ def report_bundle_payload(
         "kind": "patch_bundle",
         "path": str(path),
         "rationale": payload.get("rationale"),
+        "source_catalog": payload.get("source_catalog"),
         "target_count": len(targets) if isinstance(targets, list) else 0,
         "target_types": [
             {"type": kind, "count": count} for kind, count in sorted(target_types.items())
@@ -429,6 +440,69 @@ def safe_wiki_target(wiki_root: Path, rel_path: str) -> Path:
     if not target.is_relative_to(wiki_root.resolve()):
         raise ValueError(f"path escapes wiki root: {rel_path}")
     return target
+
+
+def patch_write_preflight(
+    payload: dict[str, Any],
+    *,
+    wiki_root: Path,
+    catalog_db: Path | None,
+    require_match: bool,
+) -> dict[str, Any]:
+    requested_root = str(wiki_root.resolve())
+    checked_roots: list[dict[str, Any]] = []
+
+    source_catalog = payload.get("source_catalog")
+    if isinstance(source_catalog, dict) and source_catalog.get("root"):
+        checked_roots.append(
+            {
+                "root": str(source_catalog["root"]),
+                "run_id": source_catalog.get("run_id"),
+                "source": "bundle.source_catalog",
+            }
+        )
+
+    if catalog_db is not None:
+        scan_run = latest_scan_run(catalog_db)
+        if scan_run is None:
+            if require_match:
+                raise ValueError(f"catalog root preflight failed: no scan run in {catalog_db}")
+            checked_roots.append(
+                {
+                    "db_path": str(catalog_db),
+                    "root": None,
+                    "source": "catalog_db",
+                    "status": "missing_scan_run",
+                }
+            )
+        else:
+            checked_roots.append(
+                {
+                    "db_path": str(catalog_db),
+                    "root": str(scan_run["root"]),
+                    "run_id": scan_run.get("run_id"),
+                    "source": "catalog_db",
+                }
+            )
+
+    mismatches = [
+        item
+        for item in checked_roots
+        if item.get("root") and str(Path(str(item["root"])).resolve()) != requested_root
+    ]
+    if mismatches and require_match:
+        details = "; ".join(
+            f"{item['source']} root {item['root']} != write root {requested_root}"
+            for item in mismatches
+        )
+        raise ValueError(f"catalog root preflight failed: {details}")
+
+    return {
+        "checked_roots": checked_roots,
+        "mismatch_count": len(mismatches),
+        "requested_wiki_root": requested_root,
+        "status": "mismatch" if mismatches else "pass",
+    }
 
 
 def sha256_file(path: Path) -> str:

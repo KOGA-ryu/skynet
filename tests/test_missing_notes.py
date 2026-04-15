@@ -43,6 +43,7 @@ class MissingNotesTests(unittest.TestCase):
             db = Path(tmp) / "catalog.sqlite"
             scan_wiki(root, db)
             bundle = build_missing_notes_patch_bundle(db)
+            self.assertEqual(bundle["source_catalog"]["root"], str(root.resolve()))
             bundle_path = Path(tmp) / "bundle.json"
             bundle_path.write_text(json.dumps(bundle))
 

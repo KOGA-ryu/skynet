@@ -5,7 +5,7 @@ import json
 from pathlib import PurePosixPath
 from typing import Any
 
-from wiki_tool.catalog import broken_links
+from wiki_tool.catalog import broken_links, latest_scan_run
 
 
 def missing_note_audit(db_path, *, limit: int | None = None) -> dict[str, Any]:
@@ -74,6 +74,7 @@ def build_missing_notes_patch_bundle(db_path, *, limit: int | None = None) -> di
         "bundle_id": f"bundle:missing-notes:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
         "created_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "rationale": "Create conservative wiki stubs for unresolved Markdown note links.",
+        "source_catalog": source_catalog_metadata(db_path),
         "targets": [
             {
                 "body": candidate["body"],
@@ -85,6 +86,16 @@ def build_missing_notes_patch_bundle(db_path, *, limit: int | None = None) -> di
             }
             for candidate in candidates
         ],
+    }
+
+
+def source_catalog_metadata(db_path) -> dict[str, Any]:
+    run = latest_scan_run(db_path)
+    return {
+        "db_path": str(db_path),
+        "root": run.get("root") if run else None,
+        "run_id": run.get("run_id") if run else None,
+        "scanned_at_utc": run.get("scanned_at_utc") if run else None,
     }
 
 

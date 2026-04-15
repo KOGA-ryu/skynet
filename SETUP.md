@@ -118,6 +118,10 @@ python3 -m wiki_tool patch-bundle apply patch_bundles/<bundle>.json --wiki-root 
 python3 -m wiki_tool patch-bundle apply patch_bundles/<bundle>.json --wiki-root /Volumes/wiki --json
 ```
 
+Real applies check that the bundle/catalog scan root matches `--wiki-root`.
+After working from `state/wiki_mirror`, rebuild the catalog from `/Volumes/wiki`
+before any NAS write.
+
 After applying a bundle:
 
 ```bash

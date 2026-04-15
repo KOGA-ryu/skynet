@@ -9,6 +9,8 @@ import sqlite3
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
+from wiki_tool.catalog import latest_scan_run
+
 
 DEFAULT_MAC_DEV_ROOT = "/Users/kogaryu/dev"
 DEFAULT_CONFIG = Path("state/devrefs_config.json")
@@ -202,5 +204,16 @@ def build_devref_patch_bundle(
         "bundle_id": f"bundle:devrefs:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
         "created_at_utc": created_at,
         "rationale": "Replace machine-specific /Users/kogaryu/dev links with portable dev:// references.",
+        "source_catalog": source_catalog_metadata(db_path),
         "targets": targets,
+    }
+
+
+def source_catalog_metadata(db_path: Path) -> dict[str, Any]:
+    run = latest_scan_run(db_path)
+    return {
+        "db_path": str(db_path),
+        "root": run.get("root") if run else None,
+        "run_id": run.get("run_id") if run else None,
+        "scanned_at_utc": run.get("scanned_at_utc") if run else None,
     }

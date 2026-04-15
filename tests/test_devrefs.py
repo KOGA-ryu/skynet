@@ -64,6 +64,7 @@ class DevRefTests(unittest.TestCase):
             self.assertEqual(audit["repos"][0]["repo"], "RD_UI")
 
             bundle = build_devref_patch_bundle(db)
+            self.assertEqual(bundle["source_catalog"]["root"], str(root.resolve()))
             self.assertEqual(len(bundle["targets"]), 1)
             target = bundle["targets"][0]
             self.assertEqual(target["type"], "replace_link_target")

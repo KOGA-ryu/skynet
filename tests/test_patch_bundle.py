@@ -1,6 +1,8 @@
 from hashlib import sha256
 from pathlib import Path
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -9,6 +11,7 @@ from wiki_tool.patch_bundle import (
     report_patch_bundle,
     rollback_patch_bundle,
 )
+from wiki_tool.catalog import scan_wiki
 
 
 def digest(text: str) -> str:
@@ -181,6 +184,143 @@ class PatchBundleReportRollbackTests(unittest.TestCase):
             result = rollback_patch_bundle(manifest_path, wiki_root=root)
             self.assertTrue(result["rolled_back"])
             self.assertEqual(note.read_text(), old_text)
+
+    def test_apply_allows_write_when_catalog_root_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wiki"
+            root.mkdir()
+            note = root / "index.md"
+            note.write_text("# Home\n\n[Main](/Users/kogaryu/dev/repo/Main.qml)\n")
+            db = Path(tmp) / "catalog.sqlite"
+            scan_wiki(root, db)
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(replace_bundle()))
+
+            result = apply_patch_bundle(
+                bundle_path,
+                wiki_root=root,
+                backup_dir=Path(tmp) / "backups",
+                catalog_db=db,
+            )
+
+            self.assertEqual(result["preflight"]["status"], "pass")
+            self.assertIn("dev://repo/Main.qml", note.read_text())
+
+    def test_apply_refuses_write_when_catalog_root_mismatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp) / "catalog_wiki"
+            write_root = Path(tmp) / "write_wiki"
+            catalog_root.mkdir()
+            write_root.mkdir()
+            text = "# Home\n\n[Main](/Users/kogaryu/dev/repo/Main.qml)\n"
+            (catalog_root / "index.md").write_text(text)
+            (write_root / "index.md").write_text(text)
+            db = Path(tmp) / "catalog.sqlite"
+            scan_wiki(catalog_root, db)
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(replace_bundle()))
+
+            with self.assertRaisesRegex(ValueError, "catalog root preflight failed"):
+                apply_patch_bundle(
+                    bundle_path,
+                    wiki_root=write_root,
+                    backup_dir=Path(tmp) / "backups",
+                    catalog_db=db,
+                )
+
+            self.assertEqual((write_root / "index.md").read_text(), text)
+
+    def test_apply_dry_run_reports_catalog_root_mismatch_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp) / "catalog_wiki"
+            write_root = Path(tmp) / "write_wiki"
+            catalog_root.mkdir()
+            write_root.mkdir()
+            text = "# Home\n\n[Main](/Users/kogaryu/dev/repo/Main.qml)\n"
+            (catalog_root / "index.md").write_text(text)
+            (write_root / "index.md").write_text(text)
+            db = Path(tmp) / "catalog.sqlite"
+            scan_wiki(catalog_root, db)
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(replace_bundle()))
+
+            result = apply_patch_bundle(
+                bundle_path,
+                wiki_root=write_root,
+                backup_dir=Path(tmp) / "backups",
+                catalog_db=db,
+                dry_run=True,
+            )
+
+            self.assertEqual(result["preflight"]["status"], "mismatch")
+            self.assertEqual(result["preflight"]["mismatch_count"], 1)
+            self.assertEqual((write_root / "index.md").read_text(), text)
+
+    def test_apply_refuses_write_when_bundle_source_catalog_mismatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle_root = Path(tmp) / "bundle_wiki"
+            write_root = Path(tmp) / "write_wiki"
+            bundle_root.mkdir()
+            write_root.mkdir()
+            text = "# Home\n\n[Main](/Users/kogaryu/dev/repo/Main.qml)\n"
+            (write_root / "index.md").write_text(text)
+            bundle = replace_bundle()
+            bundle["source_catalog"] = {
+                "root": str(bundle_root.resolve()),
+                "run_id": "scan:test",
+                "scanned_at_utc": "2026-04-15T00:00:00+00:00",
+            }
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(bundle))
+
+            with self.assertRaisesRegex(ValueError, "bundle.source_catalog root"):
+                apply_patch_bundle(
+                    bundle_path,
+                    wiki_root=write_root,
+                    backup_dir=Path(tmp) / "backups",
+                )
+
+            self.assertEqual((write_root / "index.md").read_text(), text)
+
+    def test_cli_apply_refuses_catalog_root_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp) / "catalog_wiki"
+            write_root = Path(tmp) / "write_wiki"
+            catalog_root.mkdir()
+            write_root.mkdir()
+            text = "# Home\n\n[Main](/Users/kogaryu/dev/repo/Main.qml)\n"
+            (catalog_root / "index.md").write_text(text)
+            (write_root / "index.md").write_text(text)
+            db = Path(tmp) / "catalog.sqlite"
+            scan_wiki(catalog_root, db)
+            bundle_path = Path(tmp) / "bundle.json"
+            bundle_path.write_text(json.dumps(replace_bundle()))
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "wiki_tool",
+                    "--db",
+                    str(db),
+                    "patch-bundle",
+                    "apply",
+                    str(bundle_path),
+                    "--wiki-root",
+                    str(write_root),
+                    "--backup-dir",
+                    str(Path(tmp) / "backups"),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("catalog root preflight failed", result.stderr)
+            self.assertEqual((write_root / "index.md").read_text(), text)
 
 
 def replace_bundle() -> dict[str, object]:

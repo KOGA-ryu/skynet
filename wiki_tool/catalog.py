@@ -469,6 +469,15 @@ def list_aliases(db_path: Path) -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
+def latest_scan_run(db_path: Path) -> dict[str, Any] | None:
+    with closing(sqlite3.connect(db_path)) as con:
+        con.row_factory = sqlite3.Row
+        if not table_exists(con, "scan_runs"):
+            return None
+        row = con.execute("SELECT * FROM scan_runs LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+
 def resolve_alias_path(db_path: Path, value: str) -> str | None:
     normalized = normalize_name(value)
     if not normalized:

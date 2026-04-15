@@ -148,6 +148,9 @@ Design rules:
 - Page quality reports are deterministic local queues for editorial review.
 - Patch bundle target schema and rollback safety rules are documented in
   [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md).
+- Real patch-bundle applies require the bundle/catalog scan root to match
+  `--wiki-root`; mirror-backed catalogs are for read/build work until rescanned
+  against the intended write root.
 - Applied patch manifests can be reported and rolled back. Rollback verifies
   current file hashes before restoring backups or deleting generated stubs.
 - No mass frontmatter rollout.
