@@ -18,9 +18,9 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `084ad32` (`Add stale scan detection`).
-- [ ] Current active task: compare retrieval profiles before changing search
-  behavior.
+- [x] Latest source checkpoint: `16cfce3` (`Add retrieval profile comparison`).
+- [ ] Current active task: use eval results to choose cleanup targets instead of
+  relying on memory.
 - [x] Generated stub report status: complete; `page-quality stubs` found 80
   generated stubs with 250 inbound references, and `page-quality write` now
   writes `generated_stubs.md`.
@@ -49,6 +49,11 @@ as tasks move from planned work into implemented, verified tooling.
   658 weak summaries, 223 thin notes, and 51 unclear hubs.
 - [x] Alias map implementation status: complete, with 6 validated source
   aliases.
+- [x] Retrieval profile comparison status: complete; `catalog.fts_spans.expanded`
+  improved the eval set without per-query regressions versus
+  `catalog.fts_spans.primary` (+0.1795 hit rate, +0.1667 expected-path recall,
+  +0.1475 MRR), while hybrid span/document retrieval had smaller no-regression
+  gains and document-only retrieval regressed on 8 queries.
 - [ ] Deferred environment task: Windows PC access is tapped off until the
   machine direction is settled, likely after a Linux conversion.
 
@@ -182,7 +187,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Score citation validity.
 - [x] Score broken-link regression.
 - [x] Produce repeatable eval reports.
-- [ ] Compare retrieval profiles before changing search behavior.
+- [x] Compare retrieval profiles before changing search behavior.
 - [ ] Use eval results to choose cleanup targets instead of relying on memory.
 
 ## Phase 6: Knowledge Server And API
@@ -246,18 +251,18 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Compare retrieval profiles before changing search behavior.
-2. [ ] Use eval results to choose cleanup targets instead of relying on memory.
-3. [ ] Add optional scheduled scan/audit runner.
-4. [ ] Add package entry point if CLI use becomes frequent.
-5. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
+1. [ ] Use eval results to choose cleanup targets instead of relying on memory.
+2. [ ] Add optional scheduled scan/audit runner.
+3. [ ] Add package entry point if CLI use becomes frequent.
+4. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
    wiki.
-6. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
+5. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
     into useful pages.
-7. [ ] Add an intake process for new notes.
-8. [ ] Add a promote process for rough notes becoming canonical pages.
-9. [ ] Add a template-placeholder policy so templates stay useful without
+6. [ ] Add an intake process for new notes.
+7. [ ] Add a promote process for rough notes becoming canonical pages.
+8. [ ] Add a template-placeholder policy so templates stay useful without
    polluting audits.
+9. [ ] Document editor workflow for MacBook.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -295,6 +300,8 @@ Eval:
 ```bash
 python3 -m wiki_tool eval run --json
 python3 -m wiki_tool eval run --write-report --json
+python3 -m wiki_tool eval compare-profiles --json
+python3 -m wiki_tool eval compare-profiles --write-report --json
 ```
 
 Eval runs include broken-link regression scoring from the current catalog.
