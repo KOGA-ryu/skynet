@@ -18,11 +18,14 @@ from wiki_tool.harness import (
     retrieve_catalog_chunks,
     run_answer_with_citations,
 )
+from wiki_tool.page_quality import build_page_quality_report, word_count
 
 
 DEFAULT_EVAL_FILE = Path("eval/wiki_queries_v1.jsonl")
 DEFAULT_EVAL_REPORT_DIR = Path("state/eval_reports")
 DEFAULT_BASELINE_RETRIEVAL_PROFILE = "catalog.fts_spans.primary"
+DEFAULT_CLEANUP_COMPARISON_PROFILE = "catalog.fts_spans.expanded"
+DEFAULT_CLEANUP_TARGET_LIMIT = 50
 DEFAULT_RETRIEVAL_PROFILES = [
     "catalog.fts_spans.primary",
     "catalog.fts_spans.expanded",
@@ -168,6 +171,61 @@ def compare_retrieval_profiles(
     payload["comparison"] = comparison
     if write_report:
         report_path = write_retrieval_profile_report(payload, report_dir=report_dir)
+        payload["report_path"] = str(report_path)
+    return payload
+
+
+def eval_cleanup_targets(
+    *,
+    eval_file: Path = DEFAULT_EVAL_FILE,
+    catalog_db: Path = DEFAULT_DB,
+    profile: str = DEFAULT_BASELINE_RETRIEVAL_PROFILE,
+    comparison_profile: str = DEFAULT_CLEANUP_COMPARISON_PROFILE,
+    k: int = 8,
+    limit: int | None = None,
+    target_limit: int = DEFAULT_CLEANUP_TARGET_LIMIT,
+    write_report: bool = False,
+    report_dir: Path = DEFAULT_EVAL_REPORT_DIR,
+) -> dict[str, Any]:
+    if k < 1:
+        raise ValueError("k must be greater than or equal to 1")
+    if target_limit < 0:
+        raise ValueError("target_limit must be greater than or equal to 0")
+    unknown = sorted({profile, comparison_profile} - set(DEFAULT_RETRIEVAL_PROFILES))
+    if unknown:
+        raise ValueError(f"unknown retrieval profiles: {', '.join(unknown)}")
+
+    cases = load_eval_cases(eval_file)
+    if limit is not None:
+        cases = cases[:limit]
+
+    baseline_report = score_retrieval_profile(profile, cases, catalog_db=catalog_db, k=k)
+    comparison_report = score_retrieval_profile(comparison_profile, cases, catalog_db=catalog_db, k=k)
+    quality_by_path = cleanup_quality_index(catalog_db)
+    metadata_by_path = cleanup_document_metadata(catalog_db)
+    all_targets = build_eval_cleanup_targets(
+        baseline_report,
+        comparison_report,
+        quality_by_path=quality_by_path,
+        metadata_by_path=metadata_by_path,
+    )
+    targets = all_targets[:target_limit]
+    generated_at = utc_now()
+    payload: dict[str, Any] = {
+        "catalog_db": str(catalog_db),
+        "comparison_profile": comparison_profile,
+        "eval_file": str(eval_file),
+        "generated_at_utc": generated_at,
+        "k": k,
+        "limit": limit,
+        "profile": profile,
+        "status": "pass",
+        "summary": summarize_cleanup_targets(targets, total_candidate_targets=len(all_targets)),
+        "target_limit": target_limit,
+        "targets": targets,
+    }
+    if write_report:
+        report_path = write_eval_cleanup_report(payload, report_dir=report_dir)
         payload["report_path"] = str(report_path)
     return payload
 
@@ -428,6 +486,262 @@ def profile_comparison_recommendation(comparison: dict[str, Any]) -> str:
     return "Keep current retrieval behavior; candidate profiles have no clean no-regression win."
 
 
+def cleanup_quality_index(catalog_db: Path) -> dict[str, dict[str, Any]]:
+    report = build_page_quality_report(catalog_db)
+    index: dict[str, dict[str, Any]] = {}
+    queue_flags = [
+        ("generated_stubs", "generated_stub"),
+        ("missing_summaries", "missing_summary"),
+        ("thin_notes", "thin_note"),
+        ("unclear_hubs", "unclear_hub"),
+    ]
+    for queue, flag in queue_flags:
+        for item in report[queue]:
+            path = str(item["path"])
+            entry = index.setdefault(
+                path,
+                {
+                    "quality_flags": [],
+                    "quality_reasons": [],
+                },
+            )
+            entry["quality_flags"] = unique_strings([*entry["quality_flags"], flag])
+            entry["quality_reasons"] = unique_strings(
+                [*entry["quality_reasons"], *[str(reason) for reason in item.get("reasons", [])]]
+            )
+            for key in [
+                "byte_size",
+                "inbound_count",
+                "outbound_link_count",
+                "source_count",
+                "summary_word_count",
+                "title",
+                "word_count",
+            ]:
+                if key in item:
+                    entry[key] = item[key]
+    return index
+
+
+def cleanup_document_metadata(catalog_db: Path) -> dict[str, dict[str, Any]]:
+    inbound_counts: Counter[str] = Counter()
+    outbound_counts: Counter[str] = Counter()
+    with closing(sqlite3.connect(catalog_db)) as con:
+        con.row_factory = sqlite3.Row
+        for row in con.execute(
+            """
+            SELECT source_path, target_path
+            FROM links
+            WHERE resolved = 1 AND target_path IS NOT NULL
+            """
+        ):
+            inbound_counts[str(row["target_path"])] += 1
+            outbound_counts[str(row["source_path"])] += 1
+        rows = con.execute(
+            """
+            SELECT path, title, kind, byte_size, text
+            FROM documents
+            ORDER BY path
+            """
+        ).fetchall()
+    return {
+        str(row["path"]): {
+            "byte_size": int(row["byte_size"]),
+            "inbound_count": int(inbound_counts[str(row["path"])]),
+            "kind": row["kind"],
+            "outbound_link_count": int(outbound_counts[str(row["path"])]),
+            "path": row["path"],
+            "title": row["title"],
+            "word_count": word_count(str(row["text"])),
+        }
+        for row in rows
+    }
+
+
+def build_eval_cleanup_targets(
+    baseline_report: dict[str, Any],
+    comparison_report: dict[str, Any],
+    *,
+    quality_by_path: dict[str, dict[str, Any]],
+    metadata_by_path: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    comparison_by_query = {str(result["query"]): result for result in comparison_report["results"]}
+    targets: list[dict[str, Any]] = []
+    for baseline in baseline_report["results"]:
+        comparison = comparison_by_query[str(baseline["query"])]
+        for expected_path in baseline["expected_paths"]:
+            baseline_rank = path_rank(baseline["retrieved_paths"], expected_path)
+            if baseline_rank is not None and baseline_rank <= 3:
+                continue
+            targets.append(
+                cleanup_target(
+                    baseline,
+                    comparison,
+                    expected_path,
+                    baseline_rank=baseline_rank,
+                    comparison_rank=path_rank(comparison["retrieved_paths"], expected_path),
+                    quality=quality_by_path.get(expected_path, {}),
+                    metadata=metadata_by_path.get(expected_path),
+                )
+            )
+    return sorted(targets, key=cleanup_target_sort_key)
+
+
+def cleanup_target(
+    baseline: dict[str, Any],
+    comparison: dict[str, Any],
+    expected_path: str,
+    *,
+    baseline_rank: int | None,
+    comparison_rank: int | None,
+    quality: dict[str, Any],
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    quality_flags = [str(flag) for flag in quality.get("quality_flags", [])]
+    quality_reasons = [str(reason) for reason in quality.get("quality_reasons", [])]
+    catalog_present = metadata is not None
+    action = cleanup_action(catalog_present=catalog_present, quality_flags=quality_flags)
+    reasons = cleanup_reasons(
+        baseline,
+        baseline_rank=baseline_rank,
+        comparison_rank=comparison_rank,
+        catalog_present=catalog_present,
+        quality_flags=quality_flags,
+        quality_reasons=quality_reasons,
+    )
+    merged = {**(metadata or {}), **quality}
+    priority = cleanup_priority(
+        baseline,
+        catalog_present=catalog_present,
+        quality_flags=quality_flags,
+    )
+    return {
+        "action": action,
+        "baseline_expected_path_recall": baseline["expected_path_recall"],
+        "baseline_rank": baseline_rank,
+        "baseline_retrieval_hit": baseline["retrieval_hit"],
+        "baseline_retrieved_paths": baseline["retrieved_paths"][:5],
+        "byte_size": merged.get("byte_size"),
+        "catalog_present": catalog_present,
+        "category": baseline["category"],
+        "comparison_expected_path_recall": comparison["expected_path_recall"],
+        "comparison_profile_recovered": baseline_rank is None and comparison_rank is not None,
+        "comparison_rank": comparison_rank,
+        "comparison_retrieved_paths": comparison["retrieved_paths"][:5],
+        "inbound_count": int(merged.get("inbound_count", 0)),
+        "kind": merged.get("kind"),
+        "outbound_link_count": int(merged.get("outbound_link_count", 0)),
+        "path": expected_path,
+        "priority": priority,
+        "quality_flags": quality_flags,
+        "quality_reasons": quality_reasons,
+        "query": baseline["query"],
+        "reasons": reasons,
+        "source_count": int(merged.get("source_count", 0)),
+        "summary_word_count": merged.get("summary_word_count"),
+        "title": merged.get("title") or expected_path,
+        "word_count": merged.get("word_count"),
+    }
+
+
+def cleanup_action(*, catalog_present: bool, quality_flags: list[str]) -> str:
+    if not catalog_present:
+        return "review_eval_gold_target"
+    if "generated_stub" in quality_flags:
+        return "fill_generated_stub"
+    if "unclear_hub" in quality_flags:
+        return "strengthen_hub_navigation"
+    if "missing_summary" in quality_flags:
+        return "add_opening_summary"
+    if "thin_note" in quality_flags:
+        return "expand_thin_note"
+    return "add_search_terms_or_bridge_links"
+
+
+def cleanup_priority(
+    baseline: dict[str, Any],
+    *,
+    catalog_present: bool,
+    quality_flags: list[str],
+) -> str:
+    if not baseline["retrieval_hit"] or not catalog_present or "generated_stub" in quality_flags:
+        return "P0"
+    if quality_flags:
+        return "P1"
+    return "P2"
+
+
+def cleanup_reasons(
+    baseline: dict[str, Any],
+    *,
+    baseline_rank: int | None,
+    comparison_rank: int | None,
+    catalog_present: bool,
+    quality_flags: list[str],
+    quality_reasons: list[str],
+) -> list[str]:
+    reasons: list[str] = []
+    if not baseline["retrieval_hit"]:
+        reasons.append("baseline_query_retrieval_miss")
+    if baseline_rank is None:
+        reasons.append("expected_path_not_retrieved")
+    elif baseline_rank > 3:
+        reasons.append("expected_path_low_rank")
+    if baseline_rank is None and comparison_rank is not None:
+        reasons.append("comparison_profile_recovers_path")
+    if not catalog_present:
+        reasons.append("expected_path_missing_from_catalog")
+    return unique_strings([*reasons, *quality_flags, *quality_reasons])
+
+
+def cleanup_target_sort_key(target: dict[str, Any]) -> tuple[Any, ...]:
+    priority_order = {"P0": 0, "P1": 1, "P2": 2}
+    action_order = {
+        "review_eval_gold_target": 0,
+        "fill_generated_stub": 1,
+        "strengthen_hub_navigation": 2,
+        "add_opening_summary": 3,
+        "expand_thin_note": 4,
+        "add_search_terms_or_bridge_links": 5,
+    }
+    baseline_rank = target["baseline_rank"] if target["baseline_rank"] is not None else 10_000
+    return (
+        priority_order[target["priority"]],
+        action_order[target["action"]],
+        0 if target["baseline_rank"] is None else 1,
+        -int(target["inbound_count"]),
+        baseline_rank,
+        str(target["query"]),
+        str(target["path"]),
+    )
+
+
+def path_rank(paths: list[str], path: str) -> int | None:
+    for index, candidate in enumerate(paths, start=1):
+        if candidate == path:
+            return index
+    return None
+
+
+def summarize_cleanup_targets(
+    targets: list[dict[str, Any]],
+    *,
+    total_candidate_targets: int,
+) -> dict[str, Any]:
+    priorities = Counter(str(target["priority"]) for target in targets)
+    actions = Counter(str(target["action"]) for target in targets)
+    reasons = Counter(reason for target in targets for reason in target["reasons"])
+    return {
+        "action_counts": dict(sorted(actions.items())),
+        "emitted_target_count": len(targets),
+        "hidden_target_count": max(total_candidate_targets - len(targets), 0),
+        "priority_counts": dict(sorted(priorities.items())),
+        "reason_counts": dict(sorted(reasons.items())),
+        "target_count": len(targets),
+        "total_candidate_targets": total_candidate_targets,
+    }
+
+
 def score_case(
     case: dict[str, Any],
     *,
@@ -572,6 +886,18 @@ def write_retrieval_profile_report(
     return path
 
 
+def write_eval_cleanup_report(
+    payload: dict[str, Any],
+    *,
+    report_dir: Path = DEFAULT_EVAL_REPORT_DIR,
+) -> Path:
+    report_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = report_dir / f"eval_cleanup_targets_{timestamp}.md"
+    path.write_text(render_eval_cleanup_report(payload))
+    return path
+
+
 def render_eval_report(payload: dict[str, Any]) -> str:
     summary = payload["summary"]
     regression = payload["broken_link_regression"]
@@ -695,6 +1021,67 @@ def render_retrieval_profile_report(payload: dict[str, Any]) -> str:
         )
     lines.extend(["", "## Recommendation", "", payload["recommendation"], ""])
     return "\n".join(lines)
+
+
+def render_eval_cleanup_report(payload: dict[str, Any]) -> str:
+    summary = payload["summary"]
+    lines = [
+        "# Eval Cleanup Targets",
+        "",
+        f"- generated_at_utc: `{payload['generated_at_utc']}`",
+        f"- eval file: `{payload['eval_file']}`",
+        f"- catalog db: `{payload['catalog_db']}`",
+        f"- profile: `{payload['profile']}`",
+        f"- comparison profile: `{payload['comparison_profile']}`",
+        f"- k: `{payload['k']}`",
+        f"- target limit: `{payload['target_limit']}`",
+        f"- status: `{payload['status']}`",
+        "",
+        "## Summary",
+        "",
+        f"- total candidate targets: {summary['total_candidate_targets']}",
+        f"- emitted targets: {summary['emitted_target_count']}",
+        f"- hidden targets: {summary['hidden_target_count']}",
+        "",
+        "## Action Breakdown",
+        "",
+        "| action | count |",
+        "|---|---:|",
+    ]
+    if summary["action_counts"]:
+        for action, count in summary["action_counts"].items():
+            lines.append(f"| {markdown_cell(action)} | {count} |")
+    else:
+        lines.append("| none | 0 |")
+    lines.extend(
+        [
+            "",
+            "## Top Targets",
+            "",
+            "| priority | action | path | query | baseline rank | comparison rank | reasons |",
+            "|---|---|---|---|---:|---:|---|",
+        ]
+    )
+    if not payload["targets"]:
+        lines.append("| none | none | none | none | 0 | 0 | none |")
+    for target in payload["targets"]:
+        lines.append(
+            "| {priority} | {action} | `{path}` | {query} | {baseline_rank} | {comparison_rank} | {reasons} |".format(
+                action=markdown_cell(target["action"]),
+                baseline_rank=target["baseline_rank"] if target["baseline_rank"] is not None else "missing",
+                comparison_rank=target["comparison_rank"] if target["comparison_rank"] is not None else "missing",
+                path=markdown_cell(str(target["path"])),
+                priority=target["priority"],
+                query=markdown_cell(str(target["query"])),
+                reasons=markdown_cell(", ".join(target["reasons"])),
+            )
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def markdown_cell(value: str) -> str:
+    return value.replace("|", "\\|")
 
 
 def scoring_text(harness_result: dict[str, Any], trace: dict[str, Any]) -> str:

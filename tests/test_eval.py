@@ -9,7 +9,7 @@ import unittest
 
 from wiki_tool.catalog import scan_wiki
 from wiki_tool.cli import build_parser
-from wiki_tool.eval import compare_profile_reports, compare_retrieval_profiles, run_eval
+from wiki_tool.eval import compare_profile_reports, compare_retrieval_profiles, eval_cleanup_targets, run_eval
 
 
 ROOT = Path(__file__).parents[1]
@@ -308,6 +308,171 @@ class EvalDatasetTests(unittest.TestCase):
         self.assertIn("--profiles", help_text)
         self.assertIn("--baseline-profile", help_text)
 
+    def test_eval_cleanup_targets_lists_missing_expected_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, _ = build_clean_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="retrieval",
+                        expected_paths=["concepts/missing.md"],
+                        expected_hints=["Missing"],
+                    )
+                ],
+            )
+
+            result = eval_cleanup_targets(eval_file=eval_file, catalog_db=catalog_db)
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["summary"]["target_count"], 1)
+            target = result["targets"][0]
+            self.assertEqual(target["action"], "review_eval_gold_target")
+            self.assertEqual(target["priority"], "P0")
+            self.assertFalse(target["catalog_present"])
+            self.assertIn("expected_path_missing_from_catalog", target["reasons"])
+
+    def test_eval_cleanup_targets_prioritizes_generated_stub(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = build_catalog_from_root(write_generated_stub_wiki_root(Path(tmp) / "wiki"), tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="zzzz no matching fixture term",
+                        expected_paths=["concepts/stub.md"],
+                        expected_hints=["stub"],
+                    )
+                ],
+            )
+
+            result = eval_cleanup_targets(eval_file=eval_file, catalog_db=catalog_db)
+
+            target = result["targets"][0]
+            self.assertEqual(target["action"], "fill_generated_stub")
+            self.assertEqual(target["priority"], "P0")
+            self.assertIn("generated_stub", target["quality_flags"])
+
+    def test_eval_cleanup_targets_maps_weak_summary_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, _ = build_clean_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="zzzz no matching fixture term",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                    )
+                ],
+            )
+
+            result = eval_cleanup_targets(eval_file=eval_file, catalog_db=catalog_db)
+
+            target = result["targets"][0]
+            self.assertEqual(target["action"], "add_opening_summary")
+            self.assertIn("missing_summary", target["quality_flags"])
+
+    def test_eval_cleanup_targets_maps_thin_note_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = build_catalog_from_root(write_thin_note_wiki_root(Path(tmp) / "wiki"), tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="zzzz no matching fixture term",
+                        expected_paths=["concepts/thin.md"],
+                        expected_hints=["Thin"],
+                    )
+                ],
+            )
+
+            result = eval_cleanup_targets(eval_file=eval_file, catalog_db=catalog_db)
+
+            target = result["targets"][0]
+            self.assertEqual(target["action"], "expand_thin_note")
+            self.assertIn("thin_note", target["quality_flags"])
+            self.assertNotIn("missing_summary", target["quality_flags"])
+
+    def test_eval_cleanup_targets_records_comparison_profile_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, _ = build_clean_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="retrieval absenttoken",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                    )
+                ],
+            )
+
+            result = eval_cleanup_targets(eval_file=eval_file, catalog_db=catalog_db)
+
+            target = result["targets"][0]
+            self.assertIsNone(target["baseline_rank"])
+            self.assertIsNotNone(target["comparison_rank"])
+            self.assertTrue(target["comparison_profile_recovered"])
+            self.assertIn("comparison_profile_recovers_path", target["reasons"])
+
+    def test_eval_cleanup_targets_writes_markdown_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, _ = build_clean_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="zzzz no matching fixture term",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                    )
+                ],
+            )
+            report_dir = Path(tmp) / "reports"
+
+            result = eval_cleanup_targets(
+                eval_file=eval_file,
+                catalog_db=catalog_db,
+                write_report=True,
+                report_dir=report_dir,
+            )
+
+            report_path = Path(result["report_path"])
+            self.assertTrue(report_path.exists())
+            self.assertEqual(report_path.parent, report_dir)
+            report = report_path.read_text()
+            self.assertIn("# Eval Cleanup Targets", report)
+            self.assertIn("add_opening_summary", report)
+
+    def test_eval_cleanup_targets_rejects_invalid_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, _ = build_clean_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="retrieval",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                    )
+                ],
+            )
+
+            with self.assertRaisesRegex(ValueError, "k must be greater than or equal to 1"):
+                eval_cleanup_targets(eval_file=eval_file, catalog_db=catalog_db, k=0)
+            with self.assertRaisesRegex(ValueError, "unknown retrieval profiles"):
+                eval_cleanup_targets(eval_file=eval_file, catalog_db=catalog_db, profile="missing.profile")
+
+    def test_cli_help_exposes_eval_cleanup_targets(self) -> None:
+        parser = build_parser()
+        stdout = io.StringIO()
+        with self.assertRaises(SystemExit), redirect_stdout(stdout):
+            parser.parse_args(["eval", "cleanup-targets", "--help"])
+        help_text = stdout.getvalue()
+        self.assertIn("--comparison-profile", help_text)
+        self.assertIn("--target-limit", help_text)
+
 
 def load_eval_rows() -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
@@ -352,6 +517,12 @@ def build_template_placeholder_catalog(tmp: str) -> tuple[Path, Path]:
     return catalog_db, harness_db
 
 
+def build_catalog_from_root(root: Path, tmp: str) -> Path:
+    catalog_db = Path(tmp) / "catalog.sqlite"
+    scan_wiki(root, catalog_db)
+    return catalog_db
+
+
 def write_clean_wiki_root(root: Path) -> Path:
     (root / "concepts").mkdir(parents=True)
     (root / "projects" / "demo").mkdir(parents=True)
@@ -365,6 +536,29 @@ def write_clean_wiki_root(root: Path) -> Path:
     (root / "projects" / "demo" / "README.md").write_text(
         "# Scanner Hub\n\nSee [[Retrieval]] for the read guard idea.\n\n"
         "## Scanner Evidence\n\nSnapshots should explain why a symbol fired.\n"
+    )
+    return root
+
+
+def write_generated_stub_wiki_root(root: Path) -> Path:
+    (root / "concepts").mkdir(parents=True)
+    (root / "index.md").write_text("# Sample Wiki\n\nSee [[Stub]].\n")
+    (root / "concepts" / "stub.md").write_text(
+        "# Stub\n\n"
+        "This stub exists because current wiki notes link to this page.\n\n"
+        "- status: stub\n\n"
+        "Content has not been filled in yet.\n"
+    )
+    return root
+
+
+def write_thin_note_wiki_root(root: Path) -> Path:
+    (root / "concepts").mkdir(parents=True)
+    (root / "index.md").write_text("# Sample Wiki\n\nSee [[Thin]].\n")
+    (root / "concepts" / "thin.md").write_text(
+        "# Thin\n\n"
+        "This opening summary contains more than twenty five words so the page is not classified as missing a "
+        "summary but it remains too short to stand alone for useful research.\n"
     )
     return root
 

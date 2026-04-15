@@ -35,8 +35,11 @@ from wiki_tool.devrefs import (
 from wiki_tool.eval import (
     compare_retrieval_profiles,
     DEFAULT_BASELINE_RETRIEVAL_PROFILE,
+    DEFAULT_CLEANUP_COMPARISON_PROFILE,
+    DEFAULT_CLEANUP_TARGET_LIMIT,
     DEFAULT_EVAL_FILE,
     DEFAULT_EVAL_REPORT_DIR,
+    eval_cleanup_targets,
     run_eval,
 )
 from wiki_tool.file_links import build_file_links_patch_bundle, file_link_audit
@@ -287,6 +290,18 @@ def build_parser() -> argparse.ArgumentParser:
     eval_compare.add_argument("--write-report", action="store_true")
     eval_compare.add_argument("--report-dir", type=Path, default=DEFAULT_EVAL_REPORT_DIR)
     eval_compare.set_defaults(func=cmd_eval_compare_profiles)
+    eval_cleanup = eval_sub.add_parser("cleanup-targets", help="rank eval-driven wiki cleanup targets")
+    add_json_flag(eval_cleanup)
+    eval_cleanup.add_argument("--eval-file", type=Path, default=DEFAULT_EVAL_FILE)
+    eval_cleanup.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    eval_cleanup.add_argument("--profile", default=DEFAULT_BASELINE_RETRIEVAL_PROFILE)
+    eval_cleanup.add_argument("--comparison-profile", default=DEFAULT_CLEANUP_COMPARISON_PROFILE)
+    eval_cleanup.add_argument("--k", type=int, default=8)
+    eval_cleanup.add_argument("--limit", type=int)
+    eval_cleanup.add_argument("--target-limit", type=int, default=DEFAULT_CLEANUP_TARGET_LIMIT)
+    eval_cleanup.add_argument("--write-report", action="store_true")
+    eval_cleanup.add_argument("--report-dir", type=Path, default=DEFAULT_EVAL_REPORT_DIR)
+    eval_cleanup.set_defaults(func=cmd_eval_cleanup_targets)
 
     api = sub.add_parser("api", help="bounded JSON-RPC knowledge API helpers")
     add_json_flag(api)
@@ -647,6 +662,20 @@ def cmd_eval_compare_profiles(args: argparse.Namespace) -> dict[str, Any]:
         baseline_profile=args.baseline_profile,
         k=args.k,
         limit=args.limit,
+        write_report=args.write_report,
+        report_dir=args.report_dir,
+    )
+
+
+def cmd_eval_cleanup_targets(args: argparse.Namespace) -> dict[str, Any]:
+    return eval_cleanup_targets(
+        eval_file=args.eval_file,
+        catalog_db=args.catalog_db,
+        profile=args.profile,
+        comparison_profile=args.comparison_profile,
+        k=args.k,
+        limit=args.limit,
+        target_limit=args.target_limit,
         write_report=args.write_report,
         report_dir=args.report_dir,
     )

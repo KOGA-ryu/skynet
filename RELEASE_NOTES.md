@@ -43,6 +43,8 @@ APIs.
   fallbacks, and diff runs.
 - Retrieval profile comparison can score eval-only candidates against the
   current span FTS baseline without changing production search behavior.
+- Eval cleanup targets turn retrieval misses and low-ranked expected paths into
+  a local editorial priority queue enriched with page-quality signals.
 - The local JSON-RPC API exposes bounded methods for search, headings,
   references, audit summary, `harness.run`, and `harness.show`.
 
@@ -88,6 +90,7 @@ Run the eval suite:
 ```bash
 python3 -m wiki_tool eval run --json
 python3 -m wiki_tool eval compare-profiles --json
+python3 -m wiki_tool eval cleanup-targets --json
 ```
 
 Review project and generated-stub librarian queues:
