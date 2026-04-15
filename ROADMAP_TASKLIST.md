@@ -19,7 +19,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `bd1869a` (`Add retrieval fallback chain`).
-- [ ] Current active task: expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
+- [ ] Current active task: build eval runner and recurring retrieval quality report.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -148,8 +148,8 @@ as tasks move from planned work into implemented, verified tooling.
 ## Phase 5: Retrieval Quality And Evals
 
 - [x] Create initial `eval/wiki_queries_v1.jsonl`.
-- [ ] Expand the gold query set to at least 30 wiki queries.
-- [ ] Mark expected documents, spans, symbols, and citation requirements for
+- [x] Expand the gold query set to at least 30 wiki queries.
+- [x] Mark expected documents, evidence hints, and citation requirements for
   each eval query.
 - [ ] Build eval runner over the catalog and harness.
 - [ ] Score retrieval hit rate.
@@ -220,17 +220,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
-2. [ ] Build eval runner and recurring retrieval quality report.
-3. [ ] Add the first bounded knowledge API surface.
-4. [ ] Add install/setup instructions.
-5. [ ] Add page quality reports for thin notes, missing summaries, and unclear
+1. [ ] Build eval runner and recurring retrieval quality report.
+2. [ ] Add the first bounded knowledge API surface.
+3. [ ] Add install/setup instructions.
+4. [ ] Add page quality reports for thin notes, missing summaries, and unclear
    hub pages.
-6. [ ] Add richer bundle schema docs.
-7. [ ] Add preflight check that refuses writes when catalog root and bundle root
+5. [ ] Add richer bundle schema docs.
+6. [ ] Add preflight check that refuses writes when catalog root and bundle root
    disagree.
-8. [ ] Tighten contract and schema validation.
-9. [ ] Add trace diffing between harness runs.
+7. [ ] Tighten contract and schema validation.
+8. [ ] Add trace diffing between harness runs.
+9. [ ] Add backup restore docs.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
