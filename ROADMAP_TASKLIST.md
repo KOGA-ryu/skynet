@@ -18,7 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T100815Z:838b2e4cc6371c4c`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `f304207` (`Add local wiki mirror workflow`).
+- [x] Latest source checkpoint: `8f073d2` (`Keep mirror guard marker outside sync root`).
 - [ ] Current active task: add preflight check that refuses writes when catalog
   root and bundle root disagree.
 - [x] Local mirror status: complete, with `state/wiki_mirror/` refreshed from
