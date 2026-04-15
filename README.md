@@ -21,6 +21,14 @@ Patch-bundle schema: [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md)
 
 Backup restore guide: [BACKUP_RESTORE.md](BACKUP_RESTORE.md)
 
+Optional command shortcut after `python3 -m pip install -e .`:
+
+```bash
+wiki health --json
+```
+
+The long form `python3 -m wiki_tool ...` remains the no-install fallback.
+
 Run the full local health checkpoint:
 
 ```bash

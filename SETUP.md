@@ -28,11 +28,13 @@ cd ~/dev/wiki
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
+python3 -m pip install -e .
 ```
 
 The default toolchain has no third-party runtime dependencies. Run commands
-from the repo root with `python3 -m wiki_tool ...`, or use the active virtual
-environment's `python` after activation.
+from the repo root with `python3 -m wiki_tool ...`, or install the package in
+editable mode and use the shorter `wiki ...` command from the active virtual
+environment.
 
 ## First Local Build
 
@@ -65,12 +67,18 @@ Expected healthy baseline:
 Useful read-only smoke checks:
 
 ```bash
+wiki --help
 python3 -m wiki_tool find "adapter boundary" --json
 python3 -m wiki_tool explain "adapter boundary" --json
 python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic --json
 python3 -m wiki_tool eval run --limit 3 --json
 python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method":"symbol.search","params":{"query":"adapter boundary","limit":3}}' --json
 ```
+
+After the editable install, `wiki find "adapter boundary" --json` is equivalent
+to `python3 -m wiki_tool find "adapter boundary" --json`. The long form remains
+the portable fallback when the package has not been installed into the active
+environment.
 
 ## Generated Local State
 
