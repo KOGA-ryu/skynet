@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from wiki_tool.catalog import DEFAULT_DB
+from wiki_tool.catalog import DEFAULT_DB, audit_summary
 from wiki_tool.harness import (
     DEFAULT_HARNESS_DB,
     DEFAULT_SPEC_DIR,
@@ -81,14 +81,17 @@ def run_eval(
         for case in cases
     ]
     ended_at = utc_now()
-    summary = summarize_results(results)
+    broken_link_regression = score_broken_link_regression(catalog_db)
+    summary = summarize_results(results, broken_link_regression=broken_link_regression)
+    query_status = "pass" if summary["query_pass_count"] == summary["total_cases"] else "fail"
     payload: dict[str, Any] = {
+        "broken_link_regression": broken_link_regression,
         "ended_at_utc": ended_at,
         "eval_file": str(eval_file),
         "harness_db": str(harness_db),
         "results": results,
         "started_at_utc": started_at,
-        "status": "pass" if summary["pass_count"] == summary["total_cases"] else "fail",
+        "status": "pass" if query_status == "pass" and broken_link_regression["status"] == "pass" else "fail",
         "summary": summary,
     }
     if write_report:
@@ -163,7 +166,25 @@ def score_case(
     }
 
 
-def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+def score_broken_link_regression(catalog_db: Path) -> dict[str, Any]:
+    summary = audit_summary(catalog_db)
+    scan_run = summary.get("scan_run") or {}
+    actionable_broken_links = int(summary.get("broken_links", 0))
+    return {
+        "actionable_broken_links": actionable_broken_links,
+        "categories": summary.get("broken_link_categories", []),
+        "excluded_links": int(summary.get("excluded_links", 0)),
+        "scan_root": scan_run.get("root"),
+        "scan_run_id": scan_run.get("run_id"),
+        "status": "pass" if actionable_broken_links == 0 else "fail",
+    }
+
+
+def summarize_results(
+    results: list[dict[str, Any]],
+    *,
+    broken_link_regression: dict[str, Any],
+) -> dict[str, Any]:
     total = len(results)
     pass_count = sum(1 for item in results if item["status"] == "pass")
     retrieval_hits = sum(1 for item in results if item["retrieval_hit"])
@@ -183,6 +204,8 @@ def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     failure_counts = Counter(reason for item in results for reason in item["failure_reasons"])
     return {
         "average_expected_path_recall": round(recall_sum / total, 4) if total else 0.0,
+        "actionable_broken_links": broken_link_regression["actionable_broken_links"],
+        "broken_link_regression_status": broken_link_regression["status"],
         "by_category": dict(sorted(by_category.items())),
         "citation_count_pass_count": citation_count_passes,
         "citation_count_pass_rate": ratio(citation_count_passes, total),
@@ -193,6 +216,8 @@ def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         "hint_hit_rate": ratio(hint_hits, total),
         "pass_count": pass_count,
         "pass_rate": ratio(pass_count, total),
+        "query_pass_count": pass_count,
+        "query_pass_rate": ratio(pass_count, total),
         "retrieval_hit_count": retrieval_hits,
         "retrieval_hit_rate": ratio(retrieval_hits, total),
         "total_cases": total,
@@ -209,6 +234,7 @@ def write_eval_report(payload: dict[str, Any], *, report_dir: Path = DEFAULT_EVA
 
 def render_eval_report(payload: dict[str, Any]) -> str:
     summary = payload["summary"]
+    regression = payload["broken_link_regression"]
     lines = [
         "# Wiki Eval Report",
         "",
@@ -220,18 +246,36 @@ def render_eval_report(payload: dict[str, Any]) -> str:
         "## Summary",
         "",
         f"- total cases: {summary['total_cases']}",
-        f"- pass rate: {summary['pass_rate']}",
+        f"- query pass rate: {summary['query_pass_rate']}",
         f"- retrieval hit rate: {summary['retrieval_hit_rate']}",
         f"- average expected-path recall: {summary['average_expected_path_recall']}",
         f"- citation count pass rate: {summary['citation_count_pass_rate']}",
         f"- citation path hit rate: {summary['citation_path_hit_rate']}",
         f"- hint hit rate: {summary['hint_hit_rate']}",
         "",
+        "## Broken Link Regression",
+        "",
+        f"- status: {regression['status']}",
+        f"- actionable broken links: {regression['actionable_broken_links']}",
+        f"- excluded links: {regression['excluded_links']}",
+        f"- scan run: `{regression['scan_run_id']}`",
+        f"- scan root: `{regression['scan_root']}`",
+        "",
+        "| category | count |",
+        "|---|---:|",
+    ]
+    if regression["categories"]:
+        for item in regression["categories"]:
+            lines.append(f"| {item['category']} | {item['count']} |")
+    else:
+        lines.append("| none | 0 |")
+    lines.extend([
+        "",
         "## Category Pass Rates",
         "",
         "| category | pass | total | pass rate |",
         "|---|---:|---:|---:|",
-    ]
+    ])
     for category, metrics in summary["by_category"].items():
         lines.append(
             f"| {category} | {metrics['pass_count']} | {metrics['total_cases']} | {metrics['pass_rate']} |"

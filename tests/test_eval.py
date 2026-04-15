@@ -58,7 +58,7 @@ class EvalDatasetTests(unittest.TestCase):
 
     def test_run_eval_scores_passing_case(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            catalog_db, harness_db = build_fixture_catalog(tmp)
+            catalog_db, harness_db = build_clean_fixture_catalog(tmp)
             eval_file = write_eval_file(
                 tmp,
                 [
@@ -75,12 +75,15 @@ class EvalDatasetTests(unittest.TestCase):
             self.assertEqual(result["status"], "pass")
             self.assertEqual(result["summary"]["total_cases"], 1)
             self.assertEqual(result["summary"]["pass_count"], 1)
+            self.assertEqual(result["summary"]["query_pass_count"], 1)
             self.assertEqual(result["summary"]["retrieval_hit_count"], 1)
+            self.assertEqual(result["summary"]["broken_link_regression_status"], "pass")
+            self.assertEqual(result["broken_link_regression"]["actionable_broken_links"], 0)
             self.assertEqual(result["results"][0]["status"], "pass")
 
     def test_run_eval_scores_retrieval_miss(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            catalog_db, harness_db = build_fixture_catalog(tmp)
+            catalog_db, harness_db = build_clean_fixture_catalog(tmp)
             eval_file = write_eval_file(
                 tmp,
                 [
@@ -105,7 +108,7 @@ class EvalDatasetTests(unittest.TestCase):
 
     def test_run_eval_scores_citation_count_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            catalog_db, harness_db = build_fixture_catalog(tmp)
+            catalog_db, harness_db = build_clean_fixture_catalog(tmp)
             eval_file = write_eval_file(
                 tmp,
                 [
@@ -125,9 +128,55 @@ class EvalDatasetTests(unittest.TestCase):
             self.assertFalse(result["results"][0]["citation_count_ok"])
             self.assertEqual(result["results"][0]["failure_reasons"], ["citation_count"])
 
-    def test_run_eval_writes_markdown_report(self) -> None:
+    def test_run_eval_fails_on_actionable_broken_link_regression(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             catalog_db, harness_db = build_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="retrieval",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                    )
+                ],
+            )
+
+            result = run_eval(eval_file=eval_file, catalog_db=catalog_db, harness_db=harness_db)
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(result["results"][0]["status"], "pass")
+            self.assertEqual(result["broken_link_regression"]["status"], "fail")
+            self.assertEqual(result["broken_link_regression"]["actionable_broken_links"], 1)
+            self.assertEqual(result["summary"]["actionable_broken_links"], 1)
+            self.assertEqual(result["summary"]["broken_link_regression_status"], "fail")
+
+    def test_run_eval_excludes_template_placeholders_from_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, harness_db = build_template_placeholder_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="retrieval",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                    )
+                ],
+            )
+
+            result = run_eval(eval_file=eval_file, catalog_db=catalog_db, harness_db=harness_db)
+
+            self.assertEqual(result["status"], "pass")
+            regression = result["broken_link_regression"]
+            self.assertEqual(regression["status"], "pass")
+            self.assertEqual(regression["actionable_broken_links"], 0)
+            self.assertEqual(regression["excluded_links"], 1)
+            self.assertEqual(regression["categories"], [{"category": "template_placeholder", "count": 1}])
+
+    def test_run_eval_writes_markdown_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, harness_db = build_template_placeholder_catalog(tmp)
             eval_file = write_eval_file(
                 tmp,
                 [
@@ -151,7 +200,10 @@ class EvalDatasetTests(unittest.TestCase):
             report_path = Path(result["report_path"])
             self.assertTrue(report_path.exists())
             self.assertEqual(report_path.parent, report_dir)
-            self.assertIn("# Wiki Eval Report", report_path.read_text())
+            report = report_path.read_text()
+            self.assertIn("# Wiki Eval Report", report)
+            self.assertIn("## Broken Link Regression", report)
+            self.assertIn("| template_placeholder | 1 |", report)
 
     def test_cli_help_exposes_eval_run(self) -> None:
         parser = build_parser()
@@ -185,6 +237,42 @@ def build_fixture_catalog(tmp: str) -> tuple[Path, Path]:
     harness_db = Path(tmp) / "harness.sqlite"
     scan_wiki(FIXTURE, catalog_db)
     return catalog_db, harness_db
+
+
+def build_clean_fixture_catalog(tmp: str) -> tuple[Path, Path]:
+    root = write_clean_wiki_root(Path(tmp) / "wiki")
+    catalog_db = Path(tmp) / "catalog.sqlite"
+    harness_db = Path(tmp) / "harness.sqlite"
+    scan_wiki(root, catalog_db)
+    return catalog_db, harness_db
+
+
+def build_template_placeholder_catalog(tmp: str) -> tuple[Path, Path]:
+    root = write_clean_wiki_root(Path(tmp) / "wiki")
+    templates = root / "templates"
+    templates.mkdir(parents=True)
+    (templates / "example.md").write_text("# Template\n\n[Path](<path>)\n")
+    catalog_db = Path(tmp) / "catalog.sqlite"
+    harness_db = Path(tmp) / "harness.sqlite"
+    scan_wiki(root, catalog_db)
+    return catalog_db, harness_db
+
+
+def write_clean_wiki_root(root: Path) -> Path:
+    (root / "concepts").mkdir(parents=True)
+    (root / "projects" / "demo").mkdir(parents=True)
+    (root / "index.md").write_text(
+        "# Sample Wiki\n\nStart at [Retrieval](concepts/retrieval.md) and [[Scanner Hub]].\n"
+    )
+    (root / "concepts" / "retrieval.md").write_text(
+        "# Retrieval\n\nRetrieval resolves questions to evidence.\n\n"
+        "## Symbol First\n\nPrefer symbols and spans before full file reads.\n"
+    )
+    (root / "projects" / "demo" / "README.md").write_text(
+        "# Scanner Hub\n\nSee [[Retrieval]] for the read guard idea.\n\n"
+        "## Scanner Evidence\n\nSnapshots should explain why a symbol fired.\n"
+    )
+    return root
 
 
 def write_eval_file(tmp: str, rows: list[dict[str, object]]) -> Path:
