@@ -18,7 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T102707Z:838b2e4cc6371c4c`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `891ce9e` (`Add patch bundle root preflight`).
+- [x] Latest source checkpoint: `e6088e0` (`Tighten harness schema validation`).
 - [ ] Current active task: add trace diffing between harness runs.
 - [x] Contract/schema validation status: complete; harness specs and synthesis
   outputs now fail closed against stricter declared schemas.
