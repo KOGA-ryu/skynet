@@ -65,6 +65,10 @@ python3 -m wiki_tool open projects/stock_trading/apps/scanner.md --platform wind
 python3 -m wiki_tool project-reports summary --json
 python3 -m wiki_tool project-reports show stock_trading --limit 25 --json
 python3 -m wiki_tool project-reports write --output-dir state/project_reports --limit 25 --json
+python3 -m wiki_tool source-shelves summary --json
+python3 -m wiki_tool source-shelves show math --json
+python3 -m wiki_tool source-shelves show computer --json
+python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality thin --json
 python3 -m wiki_tool page-quality missing-summaries --json
@@ -142,6 +146,16 @@ Project reports:
 - Markdown report writes are local-only under ignored `state/project_reports/`;
   they do not create NAS pages.
 
+Source shelf reports:
+
+- `source-shelves` inventories the local math and computer source shelves from
+  the derived catalog.
+- Reports flag weak summaries, thin notes, placeholder artifacts, sources with
+  no inbound routes, and sources without concept/project bridge links.
+- Markdown report writes are local-only under ignored
+  `state/source_shelf_reports/`; they do not edit NAS Markdown, move books, or
+  create patch bundles.
+
 Page quality reports:
 
 - `page-quality` identifies thin notes, weak/missing summaries, and unclear hub
@@ -187,6 +201,8 @@ Design rules:
 - Alias maps are source-controlled read-layer metadata.
 - Project reports are local read-layer outputs unless explicitly promoted
   through a later review workflow.
+- Source shelf reports are local staging-library outputs for organizing math
+  and computer-science books before NAS promotion.
 - Page quality reports are deterministic local queues for editorial review.
 - Patch bundle target schema and rollback safety rules are documented in
   [PATCH_BUNDLE_SCHEMA.md](PATCH_BUNDLE_SCHEMA.md).

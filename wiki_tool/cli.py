@@ -83,6 +83,13 @@ from wiki_tool.scheduled_audit import (
     DEFAULT_SCHEDULED_CLEANUP_TARGET_LIMIT,
     run_scheduled_audit,
 )
+from wiki_tool.source_shelves import (
+    DEFAULT_SOURCE_SHELF_LIMIT,
+    DEFAULT_SOURCE_SHELF_REPORT_DIR,
+    source_shelf_report,
+    source_shelf_summary,
+    write_source_shelf_reports,
+)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -160,6 +167,23 @@ def build_parser() -> argparse.ArgumentParser:
     project_reports_write.add_argument("--output-dir", type=Path, default=DEFAULT_PROJECT_REPORT_DIR)
     project_reports_write.add_argument("--limit", type=int, default=DEFAULT_PROJECT_REPORT_LIMIT)
     project_reports_write.set_defaults(func=cmd_project_reports_write)
+
+    source_shelves = sub.add_parser("source-shelves", help="math and computer source shelf reports")
+    add_json_flag(source_shelves)
+    source_shelves_sub = source_shelves.add_subparsers(required=True)
+    source_shelves_summary = source_shelves_sub.add_parser("summary", help="summarize source shelf queues")
+    add_json_flag(source_shelves_summary)
+    source_shelves_summary.set_defaults(func=cmd_source_shelves_summary)
+    source_shelves_show = source_shelves_sub.add_parser("show", help="show one source shelf report")
+    add_json_flag(source_shelves_show)
+    source_shelves_show.add_argument("shelf", choices=["math", "computer"])
+    source_shelves_show.add_argument("--limit", type=int, default=DEFAULT_SOURCE_SHELF_LIMIT)
+    source_shelves_show.set_defaults(func=cmd_source_shelves_show)
+    source_shelves_write = source_shelves_sub.add_parser("write", help="write local Markdown source shelf reports")
+    add_json_flag(source_shelves_write)
+    source_shelves_write.add_argument("--output-dir", type=Path, default=DEFAULT_SOURCE_SHELF_REPORT_DIR)
+    source_shelves_write.add_argument("--limit", type=int, default=DEFAULT_SOURCE_SHELF_LIMIT)
+    source_shelves_write.set_defaults(func=cmd_source_shelves_write)
 
     page_quality = sub.add_parser("page-quality", help="page quality reports for librarian review")
     add_json_flag(page_quality)
@@ -468,6 +492,18 @@ def cmd_project_reports_show(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_project_reports_write(args: argparse.Namespace) -> dict[str, Any]:
     return write_project_reports(args.db, output_dir=args.output_dir, limit=args.limit)
+
+
+def cmd_source_shelves_summary(args: argparse.Namespace) -> dict[str, Any]:
+    return source_shelf_summary(args.db)
+
+
+def cmd_source_shelves_show(args: argparse.Namespace) -> dict[str, Any]:
+    return source_shelf_report(args.db, args.shelf, limit=args.limit)
+
+
+def cmd_source_shelves_write(args: argparse.Namespace) -> dict[str, Any]:
+    return write_source_shelf_reports(args.db, output_dir=args.output_dir, limit=args.limit)
 
 
 def cmd_page_quality_summary(args: argparse.Namespace) -> dict[str, Any]:

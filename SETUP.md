@@ -72,6 +72,7 @@ python3 -m wiki_tool find "adapter boundary" --json
 python3 -m wiki_tool explain "adapter boundary" --json
 python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic --json
 python3 -m wiki_tool eval run --limit 3 --json
+python3 -m wiki_tool source-shelves summary --json
 python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method":"symbol.search","params":{"query":"adapter boundary","limit":3}}' --json
 ```
 
@@ -91,6 +92,8 @@ Ignored local outputs:
 - `state/api_traces.jsonl`: JSON-RPC API request traces.
 - `state/eval_reports/`: optional Markdown eval reports.
 - `state/project_reports/`: optional local project reports.
+- `state/source_shelf_reports/`: optional local math/computer source shelf
+  reports for staging-library cleanup.
 - `backups/`: NAS edit backups from applied patch bundles.
 - `patch_bundles/`: reviewable NAS edit plans.
 

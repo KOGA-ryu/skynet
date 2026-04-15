@@ -32,6 +32,8 @@ APIs.
 - Project reports include librarian-priority counts for generated stubs,
   reviewable orphans, weak summaries, thin notes, unclear hubs, templates, and
   generated state artifacts.
+- Source shelf reports inventory the local math and computer source shelves,
+  flag weak source notes, and build a local staging queue before NAS promotion.
 - Page-quality queues include a focused generated-stub report for placeholder
   Markdown pages that still need human-written content.
 - Patch bundles provide the guarded path for NAS edits with validation, dry-run
@@ -109,6 +111,10 @@ Review project and generated-stub librarian queues:
 python3 -m wiki_tool project-reports summary --json
 python3 -m wiki_tool project-reports show stock_trading --limit 25 --json
 python3 -m wiki_tool project-reports write --output-dir state/project_reports --limit 25 --json
+python3 -m wiki_tool source-shelves summary --json
+python3 -m wiki_tool source-shelves show math --json
+python3 -m wiki_tool source-shelves show computer --json
+python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 ```
@@ -130,9 +136,9 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method
   systemd timer is still deferred until the review cadence is chosen.
 - Generated stub pages still need a promotion queue after the focused
   human-content report.
+- Math and computer-science source notes still need editorial cleanup and bridge
+  maps after the local source shelf queue is reviewed.
 - Recurring editorial review cadence remains a next-stage editorial operation.
-- A package entry point can be added later if `python3 -m wiki_tool ...` becomes
-  too noisy for daily use.
 
 ## Verification For This Checkpoint
 
@@ -141,6 +147,7 @@ The release checkpoint should pass:
 ```bash
 python3 -m unittest discover -s tests
 python3 -m compileall wiki_tool tests
+python3 -m wiki_tool source-shelves summary --json
 python3 -m wiki_tool scheduled-audit run --json
 python3 -m wiki_tool audit --json
 git diff --check
