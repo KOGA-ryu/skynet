@@ -18,8 +18,9 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T080335Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [ ] Current active task: create first git commit checkpoint for the local
-  tooling repo.
+- [x] Latest source checkpoint: `6a592ab` (`Initial wiki usability tooling
+  checkpoint`).
+- [ ] Current active task: configure and test Windows dev root.
 
 ## Operating Rules
 
@@ -43,7 +44,8 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Exclude noisy/generated directories from scans:
   `.git`, `.obsidian`, `.venv`, `__pycache__`, `@Recycle`,
   `@Recently-Snapshot`, `runtime`, `site-packages`, `node_modules`, and `tmp`.
-- [ ] Create first git commit checkpoint for the local tooling repo.
+- [x] Create first git commit checkpoint for the local tooling repo:
+  `6a592ab`.
 - [ ] Decide whether roadmap/tasklist docs should also be mirrored into the NAS
   wiki.
 
@@ -201,7 +203,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Verify `compileall` after harness implementation.
 - [x] Verify live audit passes after NAS cleanup bundles.
 - [x] Verify one live harness run passes.
-- [ ] Create first git commit checkpoint.
+- [x] Create first git commit checkpoint: `6a592ab`.
 - [ ] Add install/setup instructions.
 - [ ] Add a single smoke-test command.
 - [ ] Add backup restore docs.
@@ -210,11 +212,12 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Create first git commit checkpoint for the local tooling repo.
-2. [ ] Configure and test Windows dev root in `state/devrefs_config.json`.
-3. [ ] Add alias maps for renamed notes and project shorthand.
-4. [ ] Add per-project backlink, orphan, and missing-hub reports.
-5. [ ] Add patch-bundle rollback and bundle report commands.
+1. [ ] Configure and test Windows dev root in `state/devrefs_config.json`.
+2. [ ] Add alias maps for renamed notes and project shorthand.
+3. [ ] Add per-project backlink, orphan, and missing-hub reports.
+4. [ ] Add patch-bundle rollback and bundle report commands.
+5. [ ] Add a single health command for scan, audit, harness validation, and
+   unit tests.
 6. [ ] Add structured-output LLM adapter behind the harness synthesis step.
 7. [ ] Add failure-taxonomy retry and fallback behavior.
 8. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
