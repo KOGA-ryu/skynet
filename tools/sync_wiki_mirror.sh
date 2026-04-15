@@ -73,7 +73,9 @@ case "$DEST_ROOT" in
     ;;
 esac
 
-if [ -d "$DEST_ROOT" ] && [ ! -f "$DEST_ROOT/.wiki_mirror_marker" ]; then
+MARKER_PATH="${DEST_ROOT%/}.mirror_marker"
+
+if [ -d "$DEST_ROOT" ] && [ ! -f "$MARKER_PATH" ]; then
   if [ -n "$(find "$DEST_ROOT" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
     echo "refusing to sync into non-empty unmarked destination: $DEST_ROOT" >&2
     exit 2
@@ -81,14 +83,13 @@ if [ -d "$DEST_ROOT" ] && [ ! -f "$DEST_ROOT/.wiki_mirror_marker" ]; then
 fi
 
 mkdir -p "$DEST_ROOT"
-touch "$DEST_ROOT/.wiki_mirror_marker"
+touch "$MARKER_PATH"
 
 RSYNC_ARGS=(
   -a
   --delete
   --delete-excluded
   --prune-empty-dirs
-  --filter "P .wiki_mirror_marker"
   --exclude-from "$EXCLUDES_FILE"
 )
 
