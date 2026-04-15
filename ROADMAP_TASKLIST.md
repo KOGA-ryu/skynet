@@ -18,7 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T080335Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `d87eac6` (`Add read-layer wiki aliases`).
+- [x] Latest source checkpoint: `ca6fae6` (`Add per-project wiki reports`).
 - [ ] Current active task: add patch-bundle rollback and bundle report commands.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
