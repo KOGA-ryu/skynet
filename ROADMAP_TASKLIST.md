@@ -18,8 +18,9 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `743643c` (`Add stub fill queue reports`).
-- [ ] Current active task: add an intake process for new notes.
+- [x] Latest source checkpoint: `65ce62c` (`Add repo demand intake workflow`).
+- [ ] Current active task: add a promote process for rough notes becoming
+  canonical pages.
 - [x] Generated stub report status: complete; `page-quality stubs` found 79
   generated stubs with 247 inbound references, and
   `page-quality stub-fill-queue` now ranks them for promotion work with
@@ -27,6 +28,10 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Stub-fill packet status: complete; `page-quality write` now emits
   `generated_stubs.md`, `stub_fill_queue.md`, and 79 local evidence packets
   under `state/page_quality/stub_fill_packets/`.
+- [x] Repo-demand intake status: complete; `intake validate`, `intake write`,
+  and `intake bundle` now stage reviewed repo findings locally, with the demo
+  manifest producing 3 findings, 5 local artifacts, and a valid 2-target patch
+  bundle without applying it.
 - [x] First usable build release notes status: complete; see
   `RELEASE_NOTES.md`.
 - [x] JSON-RPC harness API status: complete; `harness.run` and `harness.show`
@@ -269,7 +274,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Add book-to-concept bridge maps for math.
 - [x] Add source-to-project bridge maps for computer science.
 - [x] Add a local stub-fill queue and evidence packets for generated stubs.
-- [ ] Add an intake process for new notes.
+- [x] Add an intake process for new notes.
 - [ ] Add a promote process for rough notes becoming canonical pages.
 - [ ] Add a template-placeholder policy so templates stay useful without
   polluting audits.
@@ -290,8 +295,8 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add an intake process for new notes.
-2. [ ] Add a promote process for rough notes becoming canonical pages.
+1. [ ] Add a promote process for rough notes becoming canonical pages.
+2. [ ] Test repo-demand intake with the urgent real repo demand.
 3. [ ] Add a template-placeholder policy so templates stay useful without
    polluting audits.
 4. [ ] Document editor workflow for MacBook.
@@ -393,6 +398,9 @@ python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality stub-fill-queue --limit 25 --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
+python3 -m wiki_tool intake validate --input tests/fixtures/intake/demo_manifest.json --repo-root tests/fixtures/intake/repo --json
+python3 -m wiki_tool intake write --input tests/fixtures/intake/demo_manifest.json --repo-root tests/fixtures/intake/repo --output-dir state/intake --json
+python3 -m wiki_tool intake bundle --input tests/fixtures/intake/demo_manifest.json --repo-root tests/fixtures/intake/repo --wiki-root state/wiki_mirror --output patch_bundles/intake_demo_repo_demand.json --json
 ```
 
 Patch bundles:
