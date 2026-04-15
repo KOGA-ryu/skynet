@@ -1,22 +1,34 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from contextlib import closing
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import sqlite3
 from typing import Any
 
 from wiki_tool.catalog import DEFAULT_DB, audit_summary
 from wiki_tool.harness import (
+    build_fallback_search_queries,
+    build_search_queries,
     DEFAULT_HARNESS_DB,
     DEFAULT_SPEC_DIR,
     get_harness_run,
+    retrieve_catalog_chunks,
     run_answer_with_citations,
 )
 
 
 DEFAULT_EVAL_FILE = Path("eval/wiki_queries_v1.jsonl")
 DEFAULT_EVAL_REPORT_DIR = Path("state/eval_reports")
+DEFAULT_BASELINE_RETRIEVAL_PROFILE = "catalog.fts_spans.primary"
+DEFAULT_RETRIEVAL_PROFILES = [
+    "catalog.fts_spans.primary",
+    "catalog.fts_spans.expanded",
+    "catalog.fts_documents.primary",
+    "catalog.hybrid.spans_documents",
+]
 REQUIRED_EVAL_KEYS = {"category", "expected_hints", "expected_paths", "min_citations", "query"}
 
 
@@ -98,6 +110,322 @@ def run_eval(
         report_path = write_eval_report(payload, report_dir=report_dir)
         payload["report_path"] = str(report_path)
     return payload
+
+
+def compare_retrieval_profiles(
+    *,
+    eval_file: Path = DEFAULT_EVAL_FILE,
+    catalog_db: Path = DEFAULT_DB,
+    profile_ids: list[str] | None = None,
+    baseline_profile: str = DEFAULT_BASELINE_RETRIEVAL_PROFILE,
+    k: int = 8,
+    limit: int | None = None,
+    write_report: bool = False,
+    report_dir: Path = DEFAULT_EVAL_REPORT_DIR,
+) -> dict[str, Any]:
+    if k < 1:
+        raise ValueError("k must be greater than or equal to 1")
+    profiles = profile_ids or list(DEFAULT_RETRIEVAL_PROFILES)
+    profiles = unique_strings([baseline_profile, *profiles])
+    unknown = sorted(set(profiles) - set(DEFAULT_RETRIEVAL_PROFILES))
+    if unknown:
+        raise ValueError(f"unknown retrieval profiles: {', '.join(unknown)}")
+
+    cases = load_eval_cases(eval_file)
+    if limit is not None:
+        cases = cases[:limit]
+
+    started_at = utc_now()
+    profile_reports = [
+        score_retrieval_profile(
+            profile,
+            cases,
+            catalog_db=catalog_db,
+            k=k,
+        )
+        for profile in profiles
+    ]
+    ended_at = utc_now()
+    by_profile = {profile["profile_id"]: profile for profile in profile_reports}
+    comparison = compare_profile_reports(by_profile[baseline_profile], profile_reports)
+    payload: dict[str, Any] = {
+        "baseline_profile": baseline_profile,
+        "catalog_db": str(catalog_db),
+        "ended_at_utc": ended_at,
+        "eval_file": str(eval_file),
+        "k": k,
+        "limit": limit,
+        "profiles": profile_reports,
+        "recommendation": profile_comparison_recommendation(comparison),
+        "started_at_utc": started_at,
+        "status": "pass",
+        "summary": {
+            "baseline_profile": baseline_profile,
+            "profile_count": len(profile_reports),
+            "total_cases": len(cases),
+        },
+    }
+    payload["comparison"] = comparison
+    if write_report:
+        report_path = write_retrieval_profile_report(payload, report_dir=report_dir)
+        payload["report_path"] = str(report_path)
+    return payload
+
+
+def score_retrieval_profile(
+    profile_id: str,
+    cases: list[dict[str, Any]],
+    *,
+    catalog_db: Path,
+    k: int,
+) -> dict[str, Any]:
+    results = [
+        score_retrieval_profile_case(
+            case,
+            profile_id=profile_id,
+            catalog_db=catalog_db,
+            k=k,
+        )
+        for case in cases
+    ]
+    return {
+        "profile_id": profile_id,
+        "results": results,
+        "summary": summarize_retrieval_profile_results(results),
+    }
+
+
+def score_retrieval_profile_case(
+    case: dict[str, Any],
+    *,
+    profile_id: str,
+    catalog_db: Path,
+    k: int,
+) -> dict[str, Any]:
+    candidates = retrieve_profile_candidates(profile_id, str(case["query"]), catalog_db=catalog_db, k=k)
+    retrieved_paths = unique_strings(candidate["path"] for candidate in candidates)
+    expected_paths = [str(path) for path in case["expected_paths"]]
+    matched_expected_paths = [path for path in expected_paths if path in retrieved_paths]
+    top_expected_rank = first_expected_rank(retrieved_paths, expected_paths)
+    expected_path_recall = len(matched_expected_paths) / len(expected_paths)
+    return {
+        "category": case["category"],
+        "expected_path_recall": round(expected_path_recall, 4),
+        "expected_paths": expected_paths,
+        "matched_expected_paths": matched_expected_paths,
+        "profile_id": profile_id,
+        "query": case["query"],
+        "reciprocal_rank": round(1 / top_expected_rank, 4) if top_expected_rank else 0.0,
+        "retrieval_hit": bool(matched_expected_paths),
+        "retrieved_paths": retrieved_paths,
+        "top_expected_rank": top_expected_rank,
+    }
+
+
+def retrieve_profile_candidates(
+    profile_id: str,
+    query: str,
+    *,
+    catalog_db: Path,
+    k: int,
+) -> list[dict[str, Any]]:
+    if profile_id == "catalog.fts_spans.primary":
+        return retrieve_catalog_chunks(catalog_db, build_search_queries(query), k=k)
+    if profile_id == "catalog.fts_spans.expanded":
+        return retrieve_catalog_chunks(
+            catalog_db,
+            build_fallback_search_queries(query),
+            k=k,
+            method="catalog_fts_span_expanded_eval",
+        )
+    if profile_id == "catalog.fts_documents.primary":
+        return retrieve_document_candidates(catalog_db, build_search_queries(query), k=k)
+    if profile_id == "catalog.hybrid.spans_documents":
+        return merge_candidates(
+            [
+                *retrieve_catalog_chunks(catalog_db, build_search_queries(query), k=k),
+                *retrieve_document_candidates(catalog_db, build_search_queries(query), k=k),
+            ],
+            k=k,
+        )
+    raise ValueError(f"unknown retrieval profile: {profile_id}")
+
+
+def retrieve_document_candidates(catalog_db: Path, queries: list[str], *, k: int) -> list[dict[str, Any]]:
+    from wiki_tool.catalog import fts_query
+
+    merged: dict[str, dict[str, Any]] = {}
+    with closing(sqlite3.connect(catalog_db)) as con:
+        con.row_factory = sqlite3.Row
+        for query in queries:
+            match = fts_query(query)
+            if not match:
+                continue
+            rows = con.execute(
+                """
+                SELECT d.doc_id, d.path, d.title, d.text, bm25(documents_fts) AS rank
+                FROM documents_fts
+                JOIN documents d ON d.doc_id = documents_fts.doc_id
+                WHERE documents_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match, k),
+            ).fetchall()
+            for row in rows:
+                score = max(0.0, -float(row["rank"]))
+                existing = merged.get(row["doc_id"])
+                if existing and existing["score"] >= score:
+                    continue
+                merged[row["doc_id"]] = {
+                    "artifact_id": row["path"],
+                    "chunk_id": row["doc_id"],
+                    "end_line": None,
+                    "heading": row["title"],
+                    "method": "catalog_fts_document_eval",
+                    "path": row["path"],
+                    "score": score,
+                    "start_line": 1,
+                    "text": row["text"],
+                }
+    return sorted(merged.values(), key=lambda item: (-item["score"], item["path"]))[:k]
+
+
+def merge_candidates(candidates: list[dict[str, Any]], *, k: int) -> list[dict[str, Any]]:
+    by_path: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        path = str(candidate["path"])
+        existing = by_path.get(path)
+        if existing and existing["score"] >= candidate["score"]:
+            continue
+        by_path[path] = {**candidate, "method": f"hybrid:{candidate['method']}"}
+    return sorted(by_path.values(), key=lambda item: (-item["score"], item["path"]))[:k]
+
+
+def first_expected_rank(retrieved_paths: list[str], expected_paths: list[str]) -> int | None:
+    expected = set(expected_paths)
+    for index, path in enumerate(retrieved_paths, start=1):
+        if path in expected:
+            return index
+    return None
+
+
+def summarize_retrieval_profile_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(results)
+    hits = sum(1 for result in results if result["retrieval_hit"])
+    recall_sum = sum(float(result["expected_path_recall"]) for result in results)
+    rr_sum = sum(float(result["reciprocal_rank"]) for result in results)
+    by_category: dict[str, dict[str, Any]] = {}
+    for category, items in group_by_category(results).items():
+        count = len(items)
+        category_hits = sum(1 for item in items if item["retrieval_hit"])
+        category_recall = sum(float(item["expected_path_recall"]) for item in items)
+        category_rr = sum(float(item["reciprocal_rank"]) for item in items)
+        by_category[category] = {
+            "average_expected_path_recall": round(category_recall / count, 4) if count else 0.0,
+            "mean_reciprocal_rank": round(category_rr / count, 4) if count else 0.0,
+            "retrieval_hit_count": category_hits,
+            "retrieval_hit_rate": ratio(category_hits, count),
+            "total_cases": count,
+        }
+    return {
+        "average_expected_path_recall": round(recall_sum / total, 4) if total else 0.0,
+        "mean_reciprocal_rank": round(rr_sum / total, 4) if total else 0.0,
+        "retrieval_hit_count": hits,
+        "retrieval_hit_rate": ratio(hits, total),
+        "total_cases": total,
+        "by_category": dict(sorted(by_category.items())),
+    }
+
+
+def compare_profile_reports(
+    baseline: dict[str, Any],
+    profiles: list[dict[str, Any]],
+) -> dict[str, Any]:
+    baseline_results = {result["query"]: result for result in baseline["results"]}
+    reports: list[dict[str, Any]] = []
+    for profile in profiles:
+        if profile["profile_id"] == baseline["profile_id"]:
+            continue
+        improvements: list[str] = []
+        regressions: list[str] = []
+        unchanged: list[str] = []
+        for result in profile["results"]:
+            base = baseline_results[str(result["query"])]
+            delta_key = retrieval_result_delta_key(base, result)
+            if delta_key > 0:
+                improvements.append(str(result["query"]))
+            elif delta_key < 0:
+                regressions.append(str(result["query"]))
+            else:
+                unchanged.append(str(result["query"]))
+        reports.append(
+            {
+                "average_expected_path_recall_delta": round(
+                    profile["summary"]["average_expected_path_recall"]
+                    - baseline["summary"]["average_expected_path_recall"],
+                    4,
+                ),
+                "improvement_count": len(improvements),
+                "improvements": improvements,
+                "mean_reciprocal_rank_delta": round(
+                    profile["summary"]["mean_reciprocal_rank"]
+                    - baseline["summary"]["mean_reciprocal_rank"],
+                    4,
+                ),
+                "profile_id": profile["profile_id"],
+                "regression_count": len(regressions),
+                "regressions": regressions,
+                "retrieval_hit_rate_delta": round(
+                    profile["summary"]["retrieval_hit_rate"] - baseline["summary"]["retrieval_hit_rate"],
+                    4,
+                ),
+                "unchanged_count": len(unchanged),
+            }
+        )
+    return {
+        "baseline_profile": baseline["profile_id"],
+        "profiles": reports,
+    }
+
+
+def retrieval_result_delta_key(baseline: dict[str, Any], candidate: dict[str, Any]) -> float:
+    baseline_rank = baseline["top_expected_rank"] or 10_000
+    candidate_rank = candidate["top_expected_rank"] or 10_000
+    return (
+        float(candidate["expected_path_recall"]) - float(baseline["expected_path_recall"])
+        + float(candidate["reciprocal_rank"]) - float(baseline["reciprocal_rank"])
+        + (0.0001 if candidate_rank < baseline_rank else -0.0001 if candidate_rank > baseline_rank else 0.0)
+    )
+
+
+def profile_comparison_recommendation(comparison: dict[str, Any]) -> str:
+    if not comparison["profiles"]:
+        return "Only the baseline profile was evaluated; keep current retrieval behavior."
+    clean_improvers = [
+        profile
+        for profile in comparison["profiles"]
+        if profile["regression_count"] == 0
+        and (
+            profile["improvement_count"] > 0
+            or profile["retrieval_hit_rate_delta"] > 0
+            or profile["average_expected_path_recall_delta"] > 0
+            or profile["mean_reciprocal_rank_delta"] > 0
+        )
+    ]
+    if clean_improvers:
+        best = sorted(
+            clean_improvers,
+            key=lambda item: (
+                item["retrieval_hit_rate_delta"],
+                item["average_expected_path_recall_delta"],
+                item["mean_reciprocal_rank_delta"],
+                item["improvement_count"],
+            ),
+            reverse=True,
+        )[0]
+        return f"{best['profile_id']} improved the eval set without per-query regressions; keep it eval-only until reviewed."
+    return "Keep current retrieval behavior; candidate profiles have no clean no-regression win."
 
 
 def score_case(
@@ -232,6 +560,18 @@ def write_eval_report(payload: dict[str, Any], *, report_dir: Path = DEFAULT_EVA
     return path
 
 
+def write_retrieval_profile_report(
+    payload: dict[str, Any],
+    *,
+    report_dir: Path = DEFAULT_EVAL_REPORT_DIR,
+) -> Path:
+    report_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = report_dir / f"retrieval_profiles_{timestamp}.md"
+    path.write_text(render_retrieval_profile_report(payload))
+    return path
+
+
 def render_eval_report(payload: dict[str, Any]) -> str:
     summary = payload["summary"]
     regression = payload["broken_link_regression"]
@@ -303,6 +643,58 @@ def render_eval_report(payload: dict[str, Any]) -> str:
                 )
             )
     return "\n".join(lines) + "\n"
+
+
+def render_retrieval_profile_report(payload: dict[str, Any]) -> str:
+    lines = [
+        "# Retrieval Profile Comparison",
+        "",
+        f"- started: `{payload['started_at_utc']}`",
+        f"- ended: `{payload['ended_at_utc']}`",
+        f"- eval file: `{payload['eval_file']}`",
+        f"- catalog db: `{payload['catalog_db']}`",
+        f"- baseline profile: `{payload['baseline_profile']}`",
+        f"- k: `{payload['k']}`",
+        f"- status: `{payload['status']}`",
+        "",
+        "## Profile Metrics",
+        "",
+        "| profile | hit rate | recall | mrr | cases |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for profile in payload["profiles"]:
+        summary = profile["summary"]
+        lines.append(
+            "| {profile} | {hit} | {recall} | {mrr} | {cases} |".format(
+                cases=summary["total_cases"],
+                hit=summary["retrieval_hit_rate"],
+                mrr=summary["mean_reciprocal_rank"],
+                profile=profile["profile_id"],
+                recall=summary["average_expected_path_recall"],
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Baseline Deltas",
+            "",
+            "| profile | hit delta | recall delta | mrr delta | improvements | regressions |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for profile in payload["comparison"]["profiles"]:
+        lines.append(
+            "| {profile} | {hit} | {recall} | {mrr} | {improvements} | {regressions} |".format(
+                hit=profile["retrieval_hit_rate_delta"],
+                improvements=profile["improvement_count"],
+                mrr=profile["mean_reciprocal_rank_delta"],
+                profile=profile["profile_id"],
+                recall=profile["average_expected_path_recall_delta"],
+                regressions=profile["regression_count"],
+            )
+        )
+    lines.extend(["", "## Recommendation", "", payload["recommendation"], ""])
+    return "\n".join(lines)
 
 
 def scoring_text(harness_result: dict[str, Any], trace: dict[str, Any]) -> str:

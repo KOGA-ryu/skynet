@@ -9,7 +9,7 @@ import unittest
 
 from wiki_tool.catalog import scan_wiki
 from wiki_tool.cli import build_parser
-from wiki_tool.eval import run_eval
+from wiki_tool.eval import compare_profile_reports, compare_retrieval_profiles, run_eval
 
 
 ROOT = Path(__file__).parents[1]
@@ -214,6 +214,100 @@ class EvalDatasetTests(unittest.TestCase):
         self.assertIn("--eval-file", help_text)
         self.assertIn("--write-report", help_text)
 
+    def test_compare_retrieval_profiles_scores_selected_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, _ = build_clean_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="retrieval",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                    )
+                ],
+            )
+
+            result = compare_retrieval_profiles(
+                eval_file=eval_file,
+                catalog_db=catalog_db,
+                profile_ids=["catalog.fts_documents.primary"],
+                k=4,
+            )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(
+                [profile["profile_id"] for profile in result["profiles"]],
+                ["catalog.fts_spans.primary", "catalog.fts_documents.primary"],
+            )
+            self.assertEqual(result["profiles"][0]["summary"]["total_cases"], 1)
+            self.assertTrue(result["profiles"][0]["results"][0]["retrieval_hit"])
+            self.assertEqual(result["comparison"]["baseline_profile"], "catalog.fts_spans.primary")
+
+    def test_compare_retrieval_profiles_writes_markdown_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, _ = build_clean_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="retrieval",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                    )
+                ],
+            )
+            report_dir = Path(tmp) / "reports"
+
+            result = compare_retrieval_profiles(
+                eval_file=eval_file,
+                catalog_db=catalog_db,
+                profile_ids=["catalog.fts_documents.primary"],
+                write_report=True,
+                report_dir=report_dir,
+            )
+
+            report_path = Path(result["report_path"])
+            self.assertTrue(report_path.exists())
+            self.assertEqual(report_path.parent, report_dir)
+            report = report_path.read_text()
+            self.assertIn("# Retrieval Profile Comparison", report)
+            self.assertIn("catalog.fts_documents.primary", report)
+
+    def test_compare_profile_reports_classifies_improvements_regressions_and_unchanged(self) -> None:
+        baseline = profile_report(
+            "baseline",
+            [
+                profile_result("q1", recall=0.5, reciprocal_rank=0.5, top_expected_rank=2),
+                profile_result("q2", recall=1.0, reciprocal_rank=1.0, top_expected_rank=1),
+                profile_result("q3", recall=0.0, reciprocal_rank=0.0, top_expected_rank=None),
+            ],
+        )
+        candidate = profile_report(
+            "candidate",
+            [
+                profile_result("q1", recall=1.0, reciprocal_rank=1.0, top_expected_rank=1),
+                profile_result("q2", recall=0.5, reciprocal_rank=0.5, top_expected_rank=2),
+                profile_result("q3", recall=0.0, reciprocal_rank=0.0, top_expected_rank=None),
+            ],
+        )
+
+        comparison = compare_profile_reports(baseline, [baseline, candidate])
+        candidate_report = comparison["profiles"][0]
+
+        self.assertEqual(candidate_report["improvements"], ["q1"])
+        self.assertEqual(candidate_report["regressions"], ["q2"])
+        self.assertEqual(candidate_report["unchanged_count"], 1)
+
+    def test_cli_help_exposes_eval_compare_profiles(self) -> None:
+        parser = build_parser()
+        stdout = io.StringIO()
+        with self.assertRaises(SystemExit), redirect_stdout(stdout):
+            parser.parse_args(["eval", "compare-profiles", "--help"])
+        help_text = stdout.getvalue()
+        self.assertIn("--profiles", help_text)
+        self.assertIn("--baseline-profile", help_text)
+
 
 def load_eval_rows() -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
@@ -294,6 +388,35 @@ def eval_case(
         "expected_paths": expected_paths,
         "min_citations": min_citations,
         "query": query,
+    }
+
+
+def profile_report(profile_id: str, results: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "profile_id": profile_id,
+        "results": results,
+        "summary": {
+            "average_expected_path_recall": sum(float(item["expected_path_recall"]) for item in results)
+            / len(results),
+            "mean_reciprocal_rank": sum(float(item["reciprocal_rank"]) for item in results) / len(results),
+            "retrieval_hit_rate": sum(1 for item in results if item["retrieval_hit"]) / len(results),
+        },
+    }
+
+
+def profile_result(
+    query: str,
+    *,
+    recall: float,
+    reciprocal_rank: float,
+    top_expected_rank: int | None,
+) -> dict[str, object]:
+    return {
+        "expected_path_recall": recall,
+        "query": query,
+        "reciprocal_rank": reciprocal_rank,
+        "retrieval_hit": recall > 0,
+        "top_expected_rank": top_expected_rank,
     }
 
 

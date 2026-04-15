@@ -87,6 +87,8 @@ python3 -m wiki_tool harness runs --json
 python3 -m wiki_tool harness show <run_id> --json
 python3 -m wiki_tool eval run --json
 python3 -m wiki_tool eval run --write-report --json
+python3 -m wiki_tool eval compare-profiles --json
+python3 -m wiki_tool eval compare-profiles --write-report --json
 python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method":"symbol.search","params":{"query":"adapter boundary"}}' --json
 python3 -m wiki_tool api serve
 ```
@@ -156,6 +158,8 @@ Design rules:
   and deferred remediation actions recorded in run traces.
 - Empty primary retrieval automatically applies a bounded lexical fallback
   before synthesis.
+- `eval compare-profiles` compares eval-only retrieval profiles against the
+  current span FTS baseline before any production search behavior changes.
 - The JSON-RPC API is local-first and returns bounded handles, snippets,
   references, and summaries instead of whole Markdown documents.
 - JSON-RPC API traces are local ignored state under `state/api_traces.jsonl`.

@@ -32,7 +32,13 @@ from wiki_tool.devrefs import (
     is_dev_uri,
     resolve_dev_uri,
 )
-from wiki_tool.eval import DEFAULT_EVAL_FILE, DEFAULT_EVAL_REPORT_DIR, run_eval
+from wiki_tool.eval import (
+    compare_retrieval_profiles,
+    DEFAULT_BASELINE_RETRIEVAL_PROFILE,
+    DEFAULT_EVAL_FILE,
+    DEFAULT_EVAL_REPORT_DIR,
+    run_eval,
+)
 from wiki_tool.file_links import build_file_links_patch_bundle, file_link_audit
 from wiki_tool.harness import (
     DEFAULT_HARNESS_DB,
@@ -270,6 +276,17 @@ def build_parser() -> argparse.ArgumentParser:
     eval_run.add_argument("--write-report", action="store_true")
     eval_run.add_argument("--report-dir", type=Path, default=DEFAULT_EVAL_REPORT_DIR)
     eval_run.set_defaults(func=cmd_eval_run)
+    eval_compare = eval_sub.add_parser("compare-profiles", help="compare eval-only retrieval profiles")
+    add_json_flag(eval_compare)
+    eval_compare.add_argument("--eval-file", type=Path, default=DEFAULT_EVAL_FILE)
+    eval_compare.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    eval_compare.add_argument("--profiles", help="comma-separated retrieval profile IDs")
+    eval_compare.add_argument("--baseline-profile", default=DEFAULT_BASELINE_RETRIEVAL_PROFILE)
+    eval_compare.add_argument("--k", type=int, default=8)
+    eval_compare.add_argument("--limit", type=int)
+    eval_compare.add_argument("--write-report", action="store_true")
+    eval_compare.add_argument("--report-dir", type=Path, default=DEFAULT_EVAL_REPORT_DIR)
+    eval_compare.set_defaults(func=cmd_eval_compare_profiles)
 
     api = sub.add_parser("api", help="bounded JSON-RPC knowledge API helpers")
     add_json_flag(api)
@@ -621,6 +638,20 @@ def cmd_eval_run(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def cmd_eval_compare_profiles(args: argparse.Namespace) -> dict[str, Any]:
+    profiles = split_csv(args.profiles) if args.profiles else None
+    return compare_retrieval_profiles(
+        eval_file=args.eval_file,
+        catalog_db=args.catalog_db,
+        profile_ids=profiles,
+        baseline_profile=args.baseline_profile,
+        k=args.k,
+        limit=args.limit,
+        write_report=args.write_report,
+        report_dir=args.report_dir,
+    )
+
+
 def cmd_api_request(args: argparse.Namespace) -> dict[str, Any] | None:
     return handle_jsonrpc_text(
         args.request_json,
@@ -671,6 +702,10 @@ def cmd_patch_rollback(args: argparse.Namespace) -> dict[str, Any]:
         wiki_root=args.wiki_root,
         dry_run=args.dry_run,
     )
+
+
+def split_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def print_payload(payload: Any, *, json_output: bool) -> None:

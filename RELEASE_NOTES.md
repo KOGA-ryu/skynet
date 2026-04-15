@@ -41,6 +41,8 @@ APIs.
 - The executable harness can answer wiki questions with citations, persist run
   traces, validate task specs, map failures to actions, retry bounded retrieval
   fallbacks, and diff runs.
+- Retrieval profile comparison can score eval-only candidates against the
+  current span FTS baseline without changing production search behavior.
 - The local JSON-RPC API exposes bounded methods for search, headings,
   references, audit summary, `harness.run`, and `harness.show`.
 
@@ -85,6 +87,7 @@ Run the eval suite:
 
 ```bash
 python3 -m wiki_tool eval run --json
+python3 -m wiki_tool eval compare-profiles --json
 ```
 
 Review project and generated-stub librarian queues:
@@ -110,7 +113,7 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method
   final.
 - Linux path support and future PC `dev://` verification should be implemented
   only after that environment is known.
-- Scheduled audits and retrieval-profile comparison are still pending.
+- Scheduled audits are still pending.
 - Generated stub pages still need a promotion queue after the focused
   human-content report.
 - Recurring editorial review cadence remains a next-stage editorial operation.
