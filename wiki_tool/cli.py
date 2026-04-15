@@ -78,6 +78,11 @@ from wiki_tool.project_reports import (
     project_report_summary,
     write_project_reports,
 )
+from wiki_tool.scheduled_audit import (
+    DEFAULT_SCHEDULED_AUDIT_DIR,
+    DEFAULT_SCHEDULED_CLEANUP_TARGET_LIMIT,
+    run_scheduled_audit,
+)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -196,6 +201,25 @@ def build_parser() -> argparse.ArgumentParser:
     health.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
     health.add_argument("--tests-dir", type=Path, default=DEFAULT_TESTS_DIR)
     health.set_defaults(func=cmd_health, exit_fail_on_status=True)
+
+    scheduled_audit = sub.add_parser("scheduled-audit", help="scheduler-friendly local audit reports")
+    add_json_flag(scheduled_audit)
+    scheduled_audit_sub = scheduled_audit.add_subparsers(required=True)
+    scheduled_audit_run = scheduled_audit_sub.add_parser("run", help="run a local scheduled audit checkpoint")
+    add_json_flag(scheduled_audit_run)
+    scheduled_audit_run.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    scheduled_audit_run.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    scheduled_audit_run.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
+    scheduled_audit_run.add_argument("--eval-file", type=Path, default=DEFAULT_EVAL_FILE)
+    scheduled_audit_run.add_argument("--output-dir", type=Path, default=DEFAULT_SCHEDULED_AUDIT_DIR)
+    scheduled_audit_run.add_argument("--freshness-root", type=Path)
+    scheduled_audit_run.add_argument("--eval-limit", type=int)
+    scheduled_audit_run.add_argument("--cleanup-target-limit", type=int, default=DEFAULT_SCHEDULED_CLEANUP_TARGET_LIMIT)
+    scheduled_audit_run.add_argument("--require-eval", action="store_true")
+    scheduled_audit_run.add_argument("--skip-eval", action="store_true")
+    scheduled_audit_run.add_argument("--skip-cleanup-targets", action="store_true")
+    scheduled_audit_run.add_argument("--write-report", action="store_true", default=True)
+    scheduled_audit_run.set_defaults(func=cmd_scheduled_audit_run, exit_fail_on_status=True)
 
     open_cmd = sub.add_parser("open", help="translate a catalog identifier to a platform path")
     add_json_flag(open_cmd)
@@ -487,6 +511,23 @@ def cmd_health(args: argparse.Namespace) -> dict[str, Any]:
         alias_map_path=args.alias_map,
         spec_dir=args.spec_dir,
         tests_dir=args.tests_dir,
+    )
+
+
+def cmd_scheduled_audit_run(args: argparse.Namespace) -> dict[str, Any]:
+    return run_scheduled_audit(
+        catalog_db=args.catalog_db,
+        harness_db=args.harness_db,
+        spec_dir=args.spec_dir,
+        eval_file=args.eval_file,
+        output_dir=args.output_dir,
+        freshness_root=args.freshness_root,
+        eval_limit=args.eval_limit,
+        cleanup_target_limit=args.cleanup_target_limit,
+        require_eval=args.require_eval,
+        skip_eval=args.skip_eval,
+        skip_cleanup_targets=args.skip_cleanup_targets,
+        write_report=args.write_report,
     )
 
 

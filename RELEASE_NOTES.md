@@ -45,6 +45,9 @@ APIs.
   current span FTS baseline without changing production search behavior.
 - Eval cleanup targets turn retrieval misses and low-ranked expected paths into
   a local editorial priority queue enriched with page-quality signals.
+- Scheduled audit runs combine audit, harness spec validation, eval regression,
+  and cleanup-target generation into one scheduler-friendly local checkpoint.
+  Eval is advisory by default and can be made strict with `--require-eval`.
 - The local JSON-RPC API exposes bounded methods for search, headings,
   references, audit summary, `harness.run`, and `harness.show`.
 
@@ -93,6 +96,13 @@ python3 -m wiki_tool eval compare-profiles --json
 python3 -m wiki_tool eval cleanup-targets --json
 ```
 
+Run the scheduled audit checkpoint:
+
+```bash
+python3 -m wiki_tool scheduled-audit run --json
+python3 -m wiki_tool scheduled-audit run --write-report --json
+```
+
 Review project and generated-stub librarian queues:
 
 ```bash
@@ -116,7 +126,8 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method
   final.
 - Linux path support and future PC `dev://` verification should be implemented
   only after that environment is known.
-- Scheduled audits are still pending.
+- Scheduled audits have a command-only runner. Installing a cron, launchd, or
+  systemd timer is still deferred until the review cadence is chosen.
 - Generated stub pages still need a promotion queue after the focused
   human-content report.
 - Recurring editorial review cadence remains a next-stage editorial operation.
@@ -130,6 +141,7 @@ The release checkpoint should pass:
 ```bash
 python3 -m unittest discover -s tests
 python3 -m compileall wiki_tool tests
+python3 -m wiki_tool scheduled-audit run --json
 python3 -m wiki_tool audit --json
 git diff --check
 ```

@@ -91,6 +91,9 @@ python3 -m wiki_tool eval compare-profiles --json
 python3 -m wiki_tool eval compare-profiles --write-report --json
 python3 -m wiki_tool eval cleanup-targets --json
 python3 -m wiki_tool eval cleanup-targets --write-report --json
+python3 -m wiki_tool scheduled-audit run --json
+python3 -m wiki_tool scheduled-audit run --write-report --json
+python3 -m wiki_tool scheduled-audit run --require-eval --json
 python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":1,"method":"symbol.search","params":{"query":"adapter boundary"}}' --json
 python3 -m wiki_tool api serve
 ```
@@ -164,6 +167,12 @@ Design rules:
   current span FTS baseline before any production search behavior changes.
 - `eval cleanup-targets` turns eval retrieval misses and low-ranked expected
   paths into local editorial cleanup queues with page-quality signals.
+- `scheduled-audit run` is the scheduler-friendly checkpoint for audit,
+  harness spec validation, eval regression, and cleanup-target generation.
+  Eval is advisory by default while the quality queue is being worked; use
+  `--require-eval` for strict CI-style gating. Reports are local ignored
+  Markdown under `state/scheduled_audits/`; no OS scheduler is installed by
+  this repo command.
 - The JSON-RPC API is local-first and returns bounded handles, snippets,
   references, and summaries instead of whole Markdown documents.
 - JSON-RPC API traces are local ignored state under `state/api_traces.jsonl`.
