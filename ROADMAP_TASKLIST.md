@@ -18,12 +18,15 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `0ee53a9` (`Add computer source project bridge bundles`).
-- [ ] Current active task: add a stub-fill queue so generated placeholder notes
-  can be promoted into useful pages.
-- [x] Generated stub report status: complete; `page-quality stubs` found 80
-  generated stubs with 250 inbound references, and `page-quality write` now
-  writes `generated_stubs.md`.
+- [x] Latest source checkpoint: `743643c` (`Add stub fill queue reports`).
+- [ ] Current active task: add an intake process for new notes.
+- [x] Generated stub report status: complete; `page-quality stubs` found 79
+  generated stubs with 247 inbound references, and
+  `page-quality stub-fill-queue` now ranks them for promotion work with
+  P0/P1/P2 counts of 31/38/10.
+- [x] Stub-fill packet status: complete; `page-quality write` now emits
+  `generated_stubs.md`, `stub_fill_queue.md`, and 79 local evidence packets
+  under `state/page_quality/stub_fill_packets/`.
 - [x] First usable build release notes status: complete; see
   `RELEASE_NOTES.md`.
 - [x] JSON-RPC harness API status: complete; `harness.run` and `harness.show`
@@ -163,7 +166,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Add per-project backlink reports.
 - [x] Add orphan-note reports.
 - [x] Add missing-hub-page reports.
-- [ ] Add a stub-fill queue so generated placeholder notes can be promoted into
+- [x] Add a stub-fill queue so generated placeholder notes can be promoted into
   useful pages.
 
 ## Phase 3: Patch Bundle Safety
@@ -265,6 +268,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Apply the first computer source-shelf cleanup bundle to the local mirror.
 - [x] Add book-to-concept bridge maps for math.
 - [x] Add source-to-project bridge maps for computer science.
+- [x] Add a local stub-fill queue and evidence packets for generated stubs.
 - [ ] Add an intake process for new notes.
 - [ ] Add a promote process for rough notes becoming canonical pages.
 - [ ] Add a template-placeholder policy so templates stay useful without
@@ -286,18 +290,18 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
-    into useful pages.
-2. [ ] Add an intake process for new notes.
-3. [ ] Add a promote process for rough notes becoming canonical pages.
-4. [ ] Add a template-placeholder policy so templates stay useful without
+1. [ ] Add an intake process for new notes.
+2. [ ] Add a promote process for rough notes becoming canonical pages.
+3. [ ] Add a template-placeholder policy so templates stay useful without
    polluting audits.
-5. [ ] Document editor workflow for MacBook.
-6. [ ] Add recurring audit review cadence.
-7. [ ] Decide when local source-shelf changes should be promoted to NAS.
-8. [ ] Verify local mirror bridge pages after the next NAS refresh.
-9. [ ] Revisit PC access after the Windows-to-Linux decision is final.
-10. [ ] Add Linux path support if the desktop migration lands on Linux.
+4. [ ] Document editor workflow for MacBook.
+5. [ ] Add recurring audit review cadence.
+6. [ ] Decide when local source-shelf changes should be promoted to NAS.
+7. [ ] Verify local mirror bridge pages after the next NAS refresh.
+8. [ ] Revisit PC access after the Windows-to-Linux decision is final.
+9. [ ] Add Linux path support if the desktop migration lands on Linux.
+10. [ ] Decide whether roadmap/tasklist docs should also be mirrored into the
+    NAS wiki.
 
 ## Core Commands
 
@@ -387,6 +391,7 @@ python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/so
 python3 -m wiki_tool source-shelves bridge-bundle computer --output patch_bundles/source_shelves_computer_project_bridge_map.json --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality stubs --json
+python3 -m wiki_tool page-quality stub-fill-queue --limit 25 --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 ```
 
