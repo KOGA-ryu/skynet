@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 import sqlite3
@@ -101,7 +102,7 @@ def build_project_reports(db_path: Path) -> list[dict[str, Any]]:
 
 
 def load_project_report_rows(db_path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         docs = con.execute(
             """

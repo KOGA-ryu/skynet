@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -8,10 +9,19 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+import time
 from typing import Any
 
 from wiki_tool.catalog import DEFAULT_DB, fts_query
 from wiki_tool.ids import digest
+from wiki_tool.llm import (
+    DEFAULT_OPENAI_MODEL,
+    DeterministicSynthesisAdapter,
+    OpenAIStructuredSynthesisAdapter,
+    StructuredSynthesisAdapter,
+    StructuredSynthesisError,
+    synthesis_output_schema,
+)
 
 
 DEFAULT_SPEC_DIR = Path("harness_specs")
@@ -311,6 +321,9 @@ def run_answer_with_citations(
     catalog_db: Path = DEFAULT_DB,
     harness_db: Path = DEFAULT_HARNESS_DB,
     spec_dir: Path = DEFAULT_SPEC_DIR,
+    synthesis: str = "deterministic",
+    llm_model: str | None = None,
+    synthesis_adapter: StructuredSynthesisAdapter | None = None,
 ) -> dict[str, Any]:
     validation = validate_harness_specs(spec_dir)
     if not validation["valid"]:
@@ -326,11 +339,12 @@ def run_answer_with_citations(
         task_version=int(contract["version"]),
         chain_id=str(chain["id"]),
         chain_version=int(chain["version"]),
-        inputs={"user_query": user_query},
+        inputs={"llm_model": llm_model, "synthesis": synthesis, "user_query": user_query},
         started_at=started,
     )
     failures: list[dict[str, Any]] = []
     outputs: dict[str, Any] = {}
+    synthesis_metadata: dict[str, Any] = {"model": llm_model, "provider": synthesis}
     status = "running"
 
     try:
@@ -356,15 +370,48 @@ def run_answer_with_citations(
         if not chunks:
             failures.append(failure("s2_retrieve", "RETRIEVAL_EMPTY", "high", {"query": user_query}))
 
-        outputs = synthesize_answer(user_query=user_query, chunks=chunks, min_citations=min_citations(contract))
+        adapter = synthesis_adapter or synthesis_adapter_for(synthesis=synthesis, model=llm_model)
+        synthesis_started = time.perf_counter()
+        try:
+            synthesis_result = adapter.synthesize(
+                user_query=user_query,
+                chunks=chunks,
+                min_citations=min_citations(contract),
+                output_schema=synthesis_output_schema(),
+            )
+            outputs = synthesis_result.output
+            synthesis_metadata = {
+                **synthesis_result.metadata,
+                "duration_seconds": round(time.perf_counter() - synthesis_started, 3),
+                "mode": synthesis,
+            }
+        except StructuredSynthesisError as exc:
+            outputs = {}
+            synthesis_metadata = {
+                "duration_seconds": round(time.perf_counter() - synthesis_started, 3),
+                "error": str(exc),
+                "model": llm_model,
+                "mode": synthesis,
+                "provider": synthesis,
+                "token_usage": None,
+            }
+            failures.append(
+                failure("s3_synthesize", exc.failure_code, "high", synthesis_metadata)
+            )
         schema_valid = output_schema_valid(outputs)
         if not schema_valid:
             failures.append(failure("s3_synthesize", "OUTPUT_SCHEMA_INVALID", "critical", outputs))
         trace.record_step(
             "s3_synthesize",
-            "deterministic",
+            "deterministic" if synthesis == "deterministic" else "llm",
             status="ok" if schema_valid else "failed",
-            output={**outputs, "schema_valid": schema_valid},
+            tool_name=None if synthesis == "deterministic" else "llm.structured_synthesis",
+            input_data={
+                "chunk_count": len(chunks),
+                "min_citations": min_citations(contract),
+                "synthesis": synthesis,
+            },
+            output={**outputs, "schema_valid": schema_valid, "synthesis_metadata": synthesis_metadata},
         )
 
         grounded = groundedness_check(outputs.get("citations", []), chunks, min_citations=min_citations(contract))
@@ -396,6 +443,10 @@ def run_answer_with_citations(
         metrics = {
             "failure_count": len(failures),
             "retrieval_hit_count": len(outputs.get("citations", [])),
+            "synthesis": synthesis,
+            "synthesis_model": synthesis_metadata.get("model"),
+            "synthesis_provider": synthesis_metadata.get("provider"),
+            "token_usage": synthesis_metadata.get("token_usage"),
             "wall_clock_seconds": elapsed_seconds(started, ended),
         }
         trace.finish_run(
@@ -413,12 +464,21 @@ def run_answer_with_citations(
         "harness_db": str(harness_db),
         "run_id": run_id,
         "status": status,
+        "synthesis": synthesis_metadata,
     }
+
+
+def synthesis_adapter_for(*, synthesis: str, model: str | None) -> StructuredSynthesisAdapter:
+    if synthesis == "deterministic":
+        return DeterministicSynthesisAdapter()
+    if synthesis == "openai":
+        return OpenAIStructuredSynthesisAdapter(model=model or DEFAULT_OPENAI_MODEL)
+    raise ValueError(f"unsupported synthesis mode: {synthesis}")
 
 
 def list_harness_runs(harness_db: Path = DEFAULT_HARNESS_DB, *, limit: int = 10) -> dict[str, Any]:
     init_harness_db(harness_db)
-    with sqlite3.connect(harness_db) as con:
+    with closing(sqlite3.connect(harness_db)) as con:
         con.row_factory = sqlite3.Row
         rows = con.execute(
             """
@@ -444,7 +504,7 @@ def list_harness_runs(harness_db: Path = DEFAULT_HARNESS_DB, *, limit: int = 10)
 
 def get_harness_run(run_id: str, harness_db: Path = DEFAULT_HARNESS_DB) -> dict[str, Any]:
     init_harness_db(harness_db)
-    with sqlite3.connect(harness_db) as con:
+    with closing(sqlite3.connect(harness_db)) as con:
         con.row_factory = sqlite3.Row
         run = con.execute(
             "SELECT * FROM harness_runs WHERE run_id = ?",
@@ -534,7 +594,7 @@ class RunTrace:
         inputs: dict[str, Any],
         started_at: str,
     ) -> None:
-        with sqlite3.connect(self.harness_db) as con:
+        with closing(sqlite3.connect(self.harness_db)) as con:
             con.execute(
                 """
                 INSERT INTO harness_runs(
@@ -554,6 +614,7 @@ class RunTrace:
                     json.dumps(inputs, sort_keys=True),
                 ),
             )
+            con.commit()
 
     def record_step(
         self,
@@ -568,7 +629,7 @@ class RunTrace:
     ) -> None:
         started = utc_now()
         ended = utc_now()
-        with sqlite3.connect(self.harness_db) as con:
+        with closing(sqlite3.connect(self.harness_db)) as con:
             con.execute(
                 """
                 INSERT INTO harness_steps(
@@ -614,6 +675,7 @@ class RunTrace:
                         candidate.get("heading"),
                     ),
                 )
+            con.commit()
 
     def finish_run(
         self,
@@ -624,7 +686,7 @@ class RunTrace:
         metrics: dict[str, Any],
         failures: list[dict[str, Any]],
     ) -> None:
-        with sqlite3.connect(self.harness_db) as con:
+        with closing(sqlite3.connect(self.harness_db)) as con:
             for item in failures:
                 con.execute(
                     """
@@ -653,11 +715,12 @@ class RunTrace:
                     self.run_id,
                 ),
             )
+            con.commit()
 
 
 def init_harness_db(path: Path = DEFAULT_HARNESS_DB) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as con:
+    with closing(sqlite3.connect(path)) as con:
         con.executescript(
             """
             CREATE TABLE IF NOT EXISTS harness_runs (
@@ -709,11 +772,12 @@ def init_harness_db(path: Path = DEFAULT_HARNESS_DB) -> None:
             );
             """
         )
+        con.commit()
 
 
 def retrieve_catalog_chunks(catalog_db: Path, queries: list[str], *, k: int) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
-    with sqlite3.connect(catalog_db) as con:
+    with closing(sqlite3.connect(catalog_db)) as con:
         con.row_factory = sqlite3.Row
         for query in queries:
             match = fts_query(query)
@@ -750,32 +814,6 @@ def retrieve_catalog_chunks(catalog_db: Path, queries: list[str], *, k: int) -> 
     return sorted(merged.values(), key=lambda item: (-item["score"], item["path"], item["start_line"]))[:k]
 
 
-def synthesize_answer(*, user_query: str, chunks: list[dict[str, Any]], min_citations: int) -> dict[str, Any]:
-    citations = []
-    for chunk in chunks[: max(min_citations, min(4, len(chunks)))]:
-        citations.append(
-            {
-                "artifact_id": chunk["artifact_id"],
-                "chunk_id": chunk["chunk_id"],
-                "quote": quote_from_text(chunk["text"]),
-                "relevance_note": f"Matched query terms in {chunk['path']}#{chunk['heading']}",
-            }
-        )
-    if not citations:
-        answer = f"No grounded wiki evidence was found for `{user_query}`."
-    else:
-        lines = [
-            f"Found {len(chunks)} candidate wiki spans for `{user_query}`.",
-            "",
-            "## Strongest Evidence",
-            "",
-        ]
-        for index, citation in enumerate(citations, start=1):
-            lines.append(f"{index}. `{citation['artifact_id']}`: {citation['quote']}")
-        answer = "\n".join(lines)
-    return {"answer_markdown": answer, "citations": citations}
-
-
 def groundedness_check(
     citations: list[dict[str, Any]],
     chunks: list[dict[str, Any]],
@@ -806,12 +844,18 @@ def min_citations(contract: dict[str, Any]) -> int:
 
 
 def output_schema_valid(outputs: dict[str, Any]) -> bool:
-    return isinstance(outputs.get("answer_markdown"), str) and isinstance(outputs.get("citations"), list)
-
-
-def quote_from_text(text: str, *, max_words: int = 20) -> str:
-    words = " ".join(text.split()).split()
-    return " ".join(words[:max_words])
+    citations = outputs.get("citations")
+    if not isinstance(outputs.get("answer_markdown"), str) or not isinstance(citations, list):
+        return False
+    required = {"artifact_id", "chunk_id", "quote", "relevance_note"}
+    for citation in citations:
+        if not isinstance(citation, dict):
+            return False
+        if not required <= set(citation):
+            return False
+        if any(not isinstance(citation[key], str) for key in required):
+            return False
+    return True
 
 
 def normalize_quote(value: str) -> str:

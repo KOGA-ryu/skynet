@@ -56,7 +56,8 @@ python3 -m wiki_tool aliases validate --json
 python3 -m wiki_tool aliases list --json
 python3 -m wiki_tool aliases list --catalog --json
 python3 -m wiki_tool harness validate --json
-python3 -m wiki_tool harness answer "adapter boundary" --json
+python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic --json
+python3 -m wiki_tool harness answer "adapter boundary" --synthesis openai --llm-model gpt-5.4-mini --json
 python3 -m wiki_tool harness runs --json
 python3 -m wiki_tool harness show <run_id> --json
 ```
@@ -102,6 +103,8 @@ Design rules:
 - Template placeholder links are excluded from actionable broken-link counts.
 - Harness specs live in `harness_specs/` as Markdown with fenced YAML blocks.
 - Harness runs are persisted separately in `state/harness.sqlite`.
+- Harness synthesis is deterministic by default; OpenAI structured-output
+  synthesis is opt-in with `--synthesis openai` and requires `OPENAI_API_KEY`.
 - Alias maps are source-controlled read-layer metadata.
 - Project reports are local read-layer outputs unless explicitly promoted
   through a later review workflow.

@@ -14,13 +14,12 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
-- [x] Latest scan run: `scan:20260415T084300Z:0fefcc4701a65cde`.
-- [x] Latest harness run: `run:20260415T080335Z:4be3b4fc6f51c811`.
+- [x] Latest scan run: `scan:20260415T085413Z:0fefcc4701a65cde`.
+- [x] Latest harness run: `run:20260415T085419Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `1fcdafa` (`Add wiki health command`).
-- [ ] Current active task: add structured-output LLM adapter behind the harness
-  synthesis step.
+- [ ] Current active task: add failure-taxonomy retry and fallback behavior.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -140,7 +139,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Add `harness show`.
 - [x] Add unit tests for the harness.
 - [x] Verify current harness run passes.
-- [ ] Add structured-output LLM adapter behind the synthesis step.
+- [x] Add structured-output LLM adapter behind the synthesis step.
 - [ ] Add failure-taxonomy action engine for retries and fallback behavior.
 - [ ] Add retrieval fallback chain when the first query misses.
 - [ ] Tighten contract and schema validation.
@@ -221,17 +220,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add structured-output LLM adapter behind the harness synthesis step.
-2. [ ] Add failure-taxonomy retry and fallback behavior.
-3. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
-4. [ ] Build eval runner and recurring retrieval quality report.
-5. [ ] Add the first bounded knowledge API surface.
-6. [ ] Add install/setup instructions.
-7. [ ] Add page quality reports for thin notes, missing summaries, and unclear
+1. [ ] Add failure-taxonomy retry and fallback behavior.
+2. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
+3. [ ] Build eval runner and recurring retrieval quality report.
+4. [ ] Add the first bounded knowledge API surface.
+5. [ ] Add install/setup instructions.
+6. [ ] Add page quality reports for thin notes, missing summaries, and unclear
    hub pages.
-8. [ ] Add richer bundle schema docs.
-9. [ ] Add preflight check that refuses writes when catalog root and bundle root
+7. [ ] Add richer bundle schema docs.
+8. [ ] Add preflight check that refuses writes when catalog root and bundle root
    disagree.
+9. [ ] Tighten contract and schema validation.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -246,7 +245,8 @@ Harness:
 
 ```bash
 python3 -m wiki_tool harness validate --json
-python3 -m wiki_tool harness answer "adapter boundary" --json
+python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic --json
+python3 -m wiki_tool harness answer "adapter boundary" --synthesis openai --llm-model gpt-5.4-mini --json
 python3 -m wiki_tool harness runs --json
 python3 -m wiki_tool harness show <run_id> --json
 ```

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
@@ -118,7 +119,7 @@ def devref_candidates(
     mac_dev_root: str = DEFAULT_MAC_DEV_ROOT,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         rows = con.execute(
             """

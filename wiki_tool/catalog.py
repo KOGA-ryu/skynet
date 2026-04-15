@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import asdict
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -210,7 +211,7 @@ def write_catalog(
     symbols: list[Symbol],
     aliases: list[CatalogAlias],
 ) -> None:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.execute("PRAGMA journal_mode=WAL")
         create_schema(con)
         con.executescript(
@@ -297,6 +298,7 @@ def write_catalog(
                 for symbol in symbols
             ],
         )
+        con.commit()
 
 
 def create_schema(con: sqlite3.Connection) -> None:
@@ -375,7 +377,7 @@ def query_catalog(db_path: Path, mode: str, query: str, limit: int = 10) -> list
     match = fts_query(query)
     if not match:
         return []
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         if mode == "symbol.search":
             rows = con.execute(
@@ -419,7 +421,7 @@ def query_catalog(db_path: Path, mode: str, query: str, limit: int = 10) -> list
 
 
 def get_headings(db_path: Path, path: str) -> list[dict[str, Any]]:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         rows = con.execute(
             """
@@ -453,7 +455,7 @@ def alias_map_validation(
 
 
 def list_aliases(db_path: Path) -> list[dict[str, Any]]:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         if not table_exists(con, "aliases"):
             return []
@@ -471,7 +473,7 @@ def resolve_alias_path(db_path: Path, value: str) -> str | None:
     normalized = normalize_name(value)
     if not normalized:
         return None
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         if not table_exists(con, "aliases"):
             return None
@@ -483,7 +485,7 @@ def resolve_alias_path(db_path: Path, value: str) -> str | None:
 
 
 def catalog_paths_and_titles(db_path: Path) -> tuple[set[str], dict[str, str]]:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         rows = con.execute("SELECT path, title FROM documents ORDER BY path").fetchall()
     paths = {str(row["path"]) for row in rows}
@@ -501,7 +503,7 @@ def table_exists(con: sqlite3.Connection, table: str) -> bool:
 
 def find_references(db_path: Path, target: str) -> list[dict[str, Any]]:
     normalized = normalize_catalog_path(target)
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         doc = con.execute(
             "SELECT path FROM documents WHERE path = ? OR doc_id = ?",
@@ -530,7 +532,7 @@ def broken_links(
     limit: int | None = None,
     category: str | None = None,
 ) -> list[dict[str, Any]]:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         rows = con.execute(
             """
@@ -590,7 +592,7 @@ def is_template_placeholder(row: dict[str, Any], normalized_target: str) -> bool
 
 
 def gaps(db_path: Path) -> dict[str, Any]:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         no_heading = con.execute(
             "SELECT path, title, kind FROM documents WHERE doc_id NOT IN (SELECT DISTINCT doc_id FROM spans WHERE level > 0) ORDER BY path"
@@ -623,7 +625,7 @@ def open_path(
     mac_root: str,
     windows_root: str,
 ) -> dict[str, str]:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         row = con.execute(
             """
@@ -660,7 +662,7 @@ def audit_summary(db_path: Path) -> dict[str, Any]:
     broken = broken_links(db_path)
     actionable_broken = [row for row in broken if row["category"] != "template_placeholder"]
     gap_data = gaps(db_path)
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         run = con.execute("SELECT * FROM scan_runs LIMIT 1").fetchone()
         counts = con.execute(

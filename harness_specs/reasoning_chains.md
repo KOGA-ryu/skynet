@@ -7,7 +7,7 @@ kind: reasoning_chain
 id: chain.rag_answer
 version: 1
 description: >
-  Plan, retrieve catalog spans, synthesize a deterministic evidence answer, verify groundedness, then persist.
+  Plan, retrieve catalog spans, synthesize a schema-valid evidence answer, verify groundedness, then persist.
 steps:
   - id: s1_plan
     type: deterministic
@@ -24,7 +24,8 @@ steps:
     outputs:
       retrieved_chunks: list
   - id: s3_synthesize
-    type: deterministic
+    type: deterministic_or_llm
+    tool_name: llm.structured_synthesis
     output_schema:
       type: object
       required_keys:

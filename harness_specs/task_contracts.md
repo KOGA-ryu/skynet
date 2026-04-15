@@ -20,12 +20,13 @@ outputs:
     type: array
     required: true
 budgets:
-  max_model_calls: 0
+  max_model_calls: 1
   max_child_tasks: 0
   max_retrieval_k: 8
   max_wall_clock_seconds: 45
 tools_allowed:
   - retriever.search
+  - llm.structured_synthesis
   - verifier.groundedness_check
   - store.persist_run
 retrieval_profile:

@@ -41,6 +41,7 @@ from wiki_tool.harness import (
     validate_harness_specs,
 )
 from wiki_tool.health import DEFAULT_TESTS_DIR, run_health
+from wiki_tool.llm import DEFAULT_OPENAI_MODEL
 from wiki_tool.missing_notes import build_missing_notes_patch_bundle, missing_note_audit
 from wiki_tool.patch_bundle import (
     apply_patch_bundle,
@@ -219,6 +220,17 @@ def build_parser() -> argparse.ArgumentParser:
     harness_answer.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
     harness_answer.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
     harness_answer.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    harness_answer.add_argument(
+        "--synthesis",
+        choices=["deterministic", "openai"],
+        default="deterministic",
+        help="synthesis adapter to use after retrieval",
+    )
+    harness_answer.add_argument(
+        "--llm-model",
+        default=None,
+        help=f"model name for LLM-backed synthesis modes (default: {DEFAULT_OPENAI_MODEL})",
+    )
     harness_answer.set_defaults(func=cmd_harness_answer)
     harness_runs = harness_sub.add_parser("runs", help="list recent harness runs")
     add_json_flag(harness_runs)
@@ -450,6 +462,8 @@ def cmd_harness_answer(args: argparse.Namespace) -> dict[str, Any]:
         catalog_db=args.catalog_db,
         harness_db=args.harness_db,
         spec_dir=args.spec_dir,
+        synthesis=args.synthesis,
+        llm_model=args.llm_model,
     )
 
 

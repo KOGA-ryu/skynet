@@ -31,6 +31,17 @@ failures:
     respond:
       - action: retry
       - action: abort
+  - code: LLM_PROVIDER_CONFIG_MISSING
+    severity: high
+    description: Required LLM provider configuration is missing.
+    respond:
+      - action: abort
+  - code: LLM_SYNTHESIS_ERROR
+    severity: high
+    description: Structured synthesis provider failed.
+    respond:
+      - action: retry
+      - action: abort
   - code: GROUNDEDNESS_FAIL
     severity: high
     description: Answer citations are not supported by retrieved context.

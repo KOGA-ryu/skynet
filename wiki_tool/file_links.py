@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import UTC, datetime
 import posixpath
 from pathlib import Path, PurePosixPath
@@ -120,7 +121,7 @@ def build_file_links_patch_bundle(
 
 
 def scan_root(db_path: Path) -> Path | None:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         row = con.execute("SELECT root FROM scan_runs LIMIT 1").fetchone()
     return Path(row[0]) if row and row[0] else None
 
