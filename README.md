@@ -40,6 +40,11 @@ python3 -m wiki_tool open projects/stock_trading/apps/scanner.md --platform wind
 python3 -m wiki_tool project-reports summary --json
 python3 -m wiki_tool project-reports show stock_trading --json
 python3 -m wiki_tool project-reports write --output-dir state/project_reports --json
+python3 -m wiki_tool page-quality summary --json
+python3 -m wiki_tool page-quality thin --json
+python3 -m wiki_tool page-quality missing-summaries --json
+python3 -m wiki_tool page-quality unclear-hubs --json
+python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 python3 -m wiki_tool devrefs audit --json
 python3 -m wiki_tool devrefs bundle --output patch_bundles/devrefs_preview.json --json
 python3 -m wiki_tool patch-bundle validate patch_bundles/devrefs_preview.json --wiki-root /Volumes/wiki --json
@@ -101,6 +106,13 @@ Project reports:
 - Markdown report writes are local-only under ignored `state/project_reports/`;
   they do not create NAS pages.
 
+Page quality reports:
+
+- `page-quality` identifies thin notes, weak/missing summaries, and unclear hub
+  pages for librarian review.
+- Markdown report writes are local-only under ignored `state/page_quality/`;
+  they do not edit NAS Markdown.
+
 Design rules:
 
 - Markdown on the NAS is canonical.
@@ -121,6 +133,7 @@ Design rules:
 - Alias maps are source-controlled read-layer metadata.
 - Project reports are local read-layer outputs unless explicitly promoted
   through a later review workflow.
+- Page quality reports are deterministic local queues for editorial review.
 - Applied patch manifests can be reported and rolled back. Rollback verifies
   current file hashes before restoring backups or deleting generated stubs.
 - No mass frontmatter rollout.

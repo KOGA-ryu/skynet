@@ -51,6 +51,14 @@ from wiki_tool.patch_bundle import (
     rollback_patch_bundle,
     validate_patch_bundle,
 )
+from wiki_tool.page_quality import (
+    DEFAULT_PAGE_QUALITY_DIR,
+    missing_summaries_report,
+    page_quality_summary,
+    thin_notes_report,
+    unclear_hubs_report,
+    write_page_quality_reports,
+)
 from wiki_tool.project_reports import (
     DEFAULT_PROJECT_REPORT_DIR,
     project_report,
@@ -126,6 +134,29 @@ def build_parser() -> argparse.ArgumentParser:
     add_json_flag(project_reports_write)
     project_reports_write.add_argument("--output-dir", type=Path, default=DEFAULT_PROJECT_REPORT_DIR)
     project_reports_write.set_defaults(func=cmd_project_reports_write)
+
+    page_quality = sub.add_parser("page-quality", help="page quality reports for librarian review")
+    add_json_flag(page_quality)
+    page_quality_sub = page_quality.add_subparsers(required=True)
+    page_quality_summary_cmd = page_quality_sub.add_parser("summary", help="summarize page quality queues")
+    add_json_flag(page_quality_summary_cmd)
+    page_quality_summary_cmd.set_defaults(func=cmd_page_quality_summary)
+    page_quality_thin = page_quality_sub.add_parser("thin", help="list thin notes")
+    add_json_flag(page_quality_thin)
+    page_quality_thin.set_defaults(func=cmd_page_quality_thin)
+    page_quality_missing = page_quality_sub.add_parser(
+        "missing-summaries",
+        help="list notes with missing or weak summaries",
+    )
+    add_json_flag(page_quality_missing)
+    page_quality_missing.set_defaults(func=cmd_page_quality_missing_summaries)
+    page_quality_hubs = page_quality_sub.add_parser("unclear-hubs", help="list unclear hub pages")
+    add_json_flag(page_quality_hubs)
+    page_quality_hubs.set_defaults(func=cmd_page_quality_unclear_hubs)
+    page_quality_write = page_quality_sub.add_parser("write", help="write local Markdown page quality reports")
+    add_json_flag(page_quality_write)
+    page_quality_write.add_argument("--output-dir", type=Path, default=DEFAULT_PAGE_QUALITY_DIR)
+    page_quality_write.set_defaults(func=cmd_page_quality_write)
 
     audit = sub.add_parser("audit", help="summarize catalog health")
     add_json_flag(audit)
@@ -349,6 +380,26 @@ def cmd_project_reports_show(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_project_reports_write(args: argparse.Namespace) -> dict[str, Any]:
     return write_project_reports(args.db, output_dir=args.output_dir)
+
+
+def cmd_page_quality_summary(args: argparse.Namespace) -> dict[str, Any]:
+    return page_quality_summary(args.db)
+
+
+def cmd_page_quality_thin(args: argparse.Namespace) -> dict[str, Any]:
+    return thin_notes_report(args.db)
+
+
+def cmd_page_quality_missing_summaries(args: argparse.Namespace) -> dict[str, Any]:
+    return missing_summaries_report(args.db)
+
+
+def cmd_page_quality_unclear_hubs(args: argparse.Namespace) -> dict[str, Any]:
+    return unclear_hubs_report(args.db)
+
+
+def cmd_page_quality_write(args: argparse.Namespace) -> dict[str, Any]:
+    return write_page_quality_reports(args.db, output_dir=args.output_dir)
 
 
 def cmd_audit(args: argparse.Namespace) -> dict[str, Any]:
