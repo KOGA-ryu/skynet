@@ -26,6 +26,9 @@ APIs.
   tests.
 - Search/navigation commands can find documents, headings, references, symbols,
   explanations, project reports, and page-quality queues.
+- Project reports include librarian-priority counts for generated stubs,
+  reviewable orphans, weak summaries, thin notes, unclear hubs, templates, and
+  generated state artifacts.
 - Page-quality queues include a focused generated-stub report for placeholder
   Markdown pages that still need human-written content.
 - Patch bundles provide the guarded path for NAS edits with validation, dry-run
@@ -80,9 +83,12 @@ Run the eval suite:
 python3 -m wiki_tool eval run --json
 ```
 
-List generated stubs that still need content:
+Review project and generated-stub librarian queues:
 
 ```bash
+python3 -m wiki_tool project-reports summary --json
+python3 -m wiki_tool project-reports show stock_trading --limit 25 --json
+python3 -m wiki_tool project-reports write --output-dir state/project_reports --limit 25 --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
 ```
@@ -104,8 +110,7 @@ python3 -m wiki_tool api request --request-json '{"jsonrpc":"2.0","id":2,"method
   still pending.
 - Generated stub pages still need a promotion queue after the focused
   human-content report.
-- Project-level librarian reports and recurring editorial review cadence remain
-  next-stage editorial operations.
+- Recurring editorial review cadence remains a next-stage editorial operation.
 - A package entry point can be added later if `python3 -m wiki_tool ...` becomes
   too noisy for daily use.
 

@@ -52,8 +52,8 @@ python3 -m wiki_tool health --json
 python3 -m wiki_tool explain "adapter boundary"
 python3 -m wiki_tool open projects/stock_trading/apps/scanner.md --platform windows
 python3 -m wiki_tool project-reports summary --json
-python3 -m wiki_tool project-reports show stock_trading --json
-python3 -m wiki_tool project-reports write --output-dir state/project_reports --json
+python3 -m wiki_tool project-reports show stock_trading --limit 25 --json
+python3 -m wiki_tool project-reports write --output-dir state/project_reports --limit 25 --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality thin --json
 python3 -m wiki_tool page-quality missing-summaries --json
@@ -118,6 +118,9 @@ Project reports:
   project.
 - Reports summarize hub presence, inbound links, high-link notes, and orphan
   notes.
+- Librarian report fields rank project cleanup by generated stubs, reviewable
+  orphans, weak summaries, thin notes, unclear hubs, templates, and generated
+  state artifacts.
 - Markdown report writes are local-only under ignored `state/project_reports/`;
   they do not create NAS pages.
 

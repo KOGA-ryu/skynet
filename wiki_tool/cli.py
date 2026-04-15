@@ -62,6 +62,7 @@ from wiki_tool.page_quality import (
     write_page_quality_reports,
 )
 from wiki_tool.project_reports import (
+    DEFAULT_PROJECT_REPORT_LIMIT,
     DEFAULT_PROJECT_REPORT_DIR,
     project_report,
     project_report_summary,
@@ -131,10 +132,12 @@ def build_parser() -> argparse.ArgumentParser:
     project_reports_show = project_reports_sub.add_parser("show", help="show one top-level project report")
     add_json_flag(project_reports_show)
     project_reports_show.add_argument("project")
+    project_reports_show.add_argument("--limit", type=int, default=DEFAULT_PROJECT_REPORT_LIMIT)
     project_reports_show.set_defaults(func=cmd_project_reports_show)
     project_reports_write = project_reports_sub.add_parser("write", help="write local Markdown project reports")
     add_json_flag(project_reports_write)
     project_reports_write.add_argument("--output-dir", type=Path, default=DEFAULT_PROJECT_REPORT_DIR)
+    project_reports_write.add_argument("--limit", type=int, default=DEFAULT_PROJECT_REPORT_LIMIT)
     project_reports_write.set_defaults(func=cmd_project_reports_write)
 
     page_quality = sub.add_parser("page-quality", help="page quality reports for librarian review")
@@ -391,11 +394,11 @@ def cmd_project_reports_summary(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cmd_project_reports_show(args: argparse.Namespace) -> dict[str, Any]:
-    return project_report(args.db, args.project)
+    return project_report(args.db, args.project, limit=args.limit)
 
 
 def cmd_project_reports_write(args: argparse.Namespace) -> dict[str, Any]:
-    return write_project_reports(args.db, output_dir=args.output_dir)
+    return write_project_reports(args.db, output_dir=args.output_dir, limit=args.limit)
 
 
 def cmd_page_quality_summary(args: argparse.Namespace) -> dict[str, Any]:
