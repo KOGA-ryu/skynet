@@ -19,8 +19,9 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `d87eac6` (`Add read-layer wiki aliases`).
-- [ ] Current active task: add per-project backlink, orphan, and missing-hub
-  reports.
+- [ ] Current active task: add patch-bundle rollback and bundle report commands.
+- [x] Project report implementation status: complete, with 7 top-level projects
+  summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
   aliases.
 - [ ] Deferred environment task: Windows PC access is tapped off until the
@@ -99,9 +100,9 @@ as tasks move from planned work into implemented, verified tooling.
   finalized.
 - [ ] Test `dev://` opening behavior on the future PC environment.
 - [x] Add alias maps for renamed notes and project shorthand.
-- [ ] Add per-project backlink reports.
-- [ ] Add orphan-note reports.
-- [ ] Add missing-hub-page reports.
+- [x] Add per-project backlink reports.
+- [x] Add orphan-note reports.
+- [x] Add missing-hub-page reports.
 - [ ] Add a stub-fill queue so generated placeholder notes can be promoted into
   useful pages.
 
@@ -219,16 +220,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add per-project backlink, orphan, and missing-hub reports.
-2. [ ] Add patch-bundle rollback and bundle report commands.
-3. [ ] Add a single health command for scan, audit, harness validation, and
+1. [ ] Add patch-bundle rollback and bundle report commands.
+2. [ ] Add a single health command for scan, audit, harness validation, and
    unit tests.
-4. [ ] Add structured-output LLM adapter behind the harness synthesis step.
-5. [ ] Add failure-taxonomy retry and fallback behavior.
-6. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
-7. [ ] Build eval runner and recurring retrieval quality report.
-8. [ ] Add the first bounded knowledge API surface.
-9. [ ] Add install/setup instructions.
+3. [ ] Add structured-output LLM adapter behind the harness synthesis step.
+4. [ ] Add failure-taxonomy retry and fallback behavior.
+5. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
+6. [ ] Build eval runner and recurring retrieval quality report.
+7. [ ] Add the first bounded knowledge API surface.
+8. [ ] Add install/setup instructions.
+9. [ ] Add page quality reports for thin notes, missing summaries, and unclear
+   hub pages.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -258,6 +260,8 @@ python3 -m wiki_tool missing-notes audit --json
 python3 -m wiki_tool file-links audit --json
 python3 -m wiki_tool aliases validate --json
 python3 -m wiki_tool aliases list --json
+python3 -m wiki_tool project-reports summary --json
+python3 -m wiki_tool project-reports show stock_trading --json
 ```
 
 Patch bundles:

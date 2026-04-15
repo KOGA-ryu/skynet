@@ -28,6 +28,9 @@ python3 -m wiki_tool broken-links --limit 25
 python3 -m wiki_tool audit --write
 python3 -m wiki_tool explain "adapter boundary"
 python3 -m wiki_tool open projects/stock_trading/apps/scanner.md --platform windows
+python3 -m wiki_tool project-reports summary --json
+python3 -m wiki_tool project-reports show stock_trading --json
+python3 -m wiki_tool project-reports write --output-dir state/project_reports --json
 python3 -m wiki_tool devrefs audit --json
 python3 -m wiki_tool devrefs bundle --output patch_bundles/devrefs_preview.json --json
 python3 -m wiki_tool patch-bundle validate patch_bundles/devrefs_preview.json --wiki-root /Volumes/wiki --json
@@ -71,6 +74,15 @@ Alias maps:
 - Keep aliases conservative. Do not add broad aliases when a shorthand could
   reasonably point at multiple pages.
 
+Project reports:
+
+- `project-reports` treats each direct child of `projects/` as a top-level
+  project.
+- Reports summarize hub presence, inbound links, high-link notes, and orphan
+  notes.
+- Markdown report writes are local-only under ignored `state/project_reports/`;
+  they do not create NAS pages.
+
 Design rules:
 
 - Markdown on the NAS is canonical.
@@ -80,6 +92,8 @@ Design rules:
 - Harness specs live in `harness_specs/` as Markdown with fenced YAML blocks.
 - Harness runs are persisted separately in `state/harness.sqlite`.
 - Alias maps are source-controlled read-layer metadata.
+- Project reports are local read-layer outputs unless explicitly promoted
+  through a later review workflow.
 - No mass frontmatter rollout.
 - No embeddings-first retrieval.
 - Multi-file edits should go through local patch bundles and backups before any

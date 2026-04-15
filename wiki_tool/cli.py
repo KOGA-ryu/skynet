@@ -42,6 +42,12 @@ from wiki_tool.harness import (
 )
 from wiki_tool.missing_notes import build_missing_notes_patch_bundle, missing_note_audit
 from wiki_tool.patch_bundle import apply_patch_bundle, validate_patch_bundle
+from wiki_tool.project_reports import (
+    DEFAULT_PROJECT_REPORT_DIR,
+    project_report,
+    project_report_summary,
+    write_project_reports,
+)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -93,6 +99,21 @@ def build_parser() -> argparse.ArgumentParser:
     gap_cmd = sub.add_parser("gaps", help="show catalog gaps")
     add_json_flag(gap_cmd)
     gap_cmd.set_defaults(func=cmd_gaps)
+
+    project_reports = sub.add_parser("project-reports", help="per-project backlink and gap reports")
+    add_json_flag(project_reports)
+    project_reports_sub = project_reports.add_subparsers(required=True)
+    project_reports_summary = project_reports_sub.add_parser("summary", help="summarize all top-level projects")
+    add_json_flag(project_reports_summary)
+    project_reports_summary.set_defaults(func=cmd_project_reports_summary)
+    project_reports_show = project_reports_sub.add_parser("show", help="show one top-level project report")
+    add_json_flag(project_reports_show)
+    project_reports_show.add_argument("project")
+    project_reports_show.set_defaults(func=cmd_project_reports_show)
+    project_reports_write = project_reports_sub.add_parser("write", help="write local Markdown project reports")
+    add_json_flag(project_reports_write)
+    project_reports_write.add_argument("--output-dir", type=Path, default=DEFAULT_PROJECT_REPORT_DIR)
+    project_reports_write.set_defaults(func=cmd_project_reports_write)
 
     audit = sub.add_parser("audit", help="summarize catalog health")
     add_json_flag(audit)
@@ -245,6 +266,18 @@ def cmd_broken_links(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_gaps(args: argparse.Namespace) -> dict[str, Any]:
     return gaps(args.db)
+
+
+def cmd_project_reports_summary(args: argparse.Namespace) -> dict[str, Any]:
+    return project_report_summary(args.db)
+
+
+def cmd_project_reports_show(args: argparse.Namespace) -> dict[str, Any]:
+    return project_report(args.db, args.project)
+
+
+def cmd_project_reports_write(args: argparse.Namespace) -> dict[str, Any]:
+    return write_project_reports(args.db, output_dir=args.output_dir)
 
 
 def cmd_audit(args: argparse.Namespace) -> dict[str, Any]:
@@ -460,6 +493,16 @@ def compact(value: Any) -> str:
             "normalized",
             "target_path",
             "reason",
+            "project",
+            "root",
+            "hub_path",
+            "hub_present",
+            "missing_hub",
+            "note_count",
+            "orphan_count",
+            "inbound_count",
+            "source_path",
+            "line_count",
         ]
         parts = [f"{key}={value[key]!r}" for key in preferred if key in value]
         return ", ".join(parts) if parts else json.dumps(value, sort_keys=True)
