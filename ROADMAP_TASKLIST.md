@@ -13,14 +13,13 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest audit status: pass.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
-- [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
-- [x] Latest scan run: `scan:20260415T112457Z:f4351838b68707a7`.
+- [x] Catalog size: 844 documents, 4,255 links, 6,663 spans, 7,485 symbols.
+- [x] Latest scan run: `scan:20260415T124307Z:f4351838b68707a7`.
 - [x] Latest harness run: `run:20260415T105602Z:4be3b4fc6f51c811`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `7b8deb1` (`Add source shelf reports`).
-- [ ] Current active task: use source shelf reports to prioritize
-  math/computer book cleanup.
+- [x] Latest source checkpoint: `154bd47` (`Add source shelf cleanup bundles`).
+- [ ] Current active task: add book-to-concept bridge maps for math.
 - [x] Generated stub report status: complete; `page-quality stubs` found 80
   generated stubs with 250 inbound references, and `page-quality write` now
   writes `generated_stubs.md`.
@@ -43,7 +42,7 @@ as tasks move from planned work into implemented, verified tooling.
   the NAS and heavy stock-trading payloads excluded.
 - [x] Stale-scan detection status: complete; `scan-status` and `audit` report
   freshness against the catalog root or an override root, with live mirror
-  freshness passing across 845 documents and 1,314 tracked files.
+  freshness passing across 844 documents and 1,313 tracked files.
 - [x] Project-level librarian reports status: complete; live reports summarize
   7 top-level projects, 79 project generated stubs, 331 reviewable orphans,
   658 weak summaries, 223 thin notes, and 51 unclear hubs.
@@ -63,10 +62,14 @@ as tasks move from planned work into implemented, verified tooling.
   emitted cleanup targets from 34 candidates.
 - [x] Package entry point status: complete; editable installs now expose the
   `wiki` console command while `python3 -m wiki_tool ...` remains supported.
-- [x] Source shelf report status: complete; local catalog reports 44 math and
-  computer source notes across 2 shelves, with math at 23 maintained notes and
-  computer at 21 notes, 9 weak summaries, 1 thin note, 1 placeholder artifact,
-  1 missing inbound route, and 1 missing concept/project bridge.
+- [x] Source shelf cleanup status: complete in the local mirror; local catalog
+  reports 43 math and computer source notes across 2 shelves, with math at 23
+  maintained notes and computer at 20 maintained notes, and zero source-shelf
+  weak summaries, thin notes, generated stubs, placeholder artifacts, missing
+  inbound routes, or missing concept/project bridges.
+- [x] Local cleanup bundle status: applied to `state/wiki_mirror` only via
+  `patch_bundles/source_shelves_computer_cleanup.json`, with rollback manifest
+  under `backups/bundle_source-shelves_computer-cleanup_20260415T124251Z/`.
 - [ ] Deferred environment task: Windows PC access is tapped off until the
   machine direction is settled, likely after a Linux conversion.
 
@@ -244,8 +247,9 @@ as tasks move from planned work into implemented, verified tooling.
   hub pages.
 - [x] Add project-level librarian reports.
 - [x] Add local source shelf reports for math and computer science books.
-- [ ] Use source shelf reports to prioritize math/computer book cleanup.
-- [ ] Use source shelf reports to fill computer science source-note summaries.
+- [x] Use source shelf reports to prioritize math/computer book cleanup.
+- [x] Use source shelf reports to fill computer science source-note summaries.
+- [x] Apply the first computer source-shelf cleanup bundle to the local mirror.
 - [ ] Add book-to-concept bridge maps for math.
 - [ ] Add book-to-project bridge maps for computer science.
 - [ ] Add an intake process for new notes.
@@ -269,17 +273,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Use source shelf reports to prioritize math/computer book cleanup.
-2. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
+1. [ ] Add book-to-concept bridge maps for math.
+2. [ ] Add book-to-project bridge maps for computer science.
+3. [ ] Add a stub-fill queue so generated placeholder notes can be promoted
     into useful pages.
-3. [ ] Add an intake process for new notes.
-4. [ ] Add a promote process for rough notes becoming canonical pages.
-5. [ ] Add a template-placeholder policy so templates stay useful without
+4. [ ] Add an intake process for new notes.
+5. [ ] Add a promote process for rough notes becoming canonical pages.
+6. [ ] Add a template-placeholder policy so templates stay useful without
    polluting audits.
-6. [ ] Document editor workflow for MacBook.
-7. [ ] Add recurring audit review cadence.
-8. [ ] Add book-to-concept bridge maps for math.
-9. [ ] Add book-to-project bridge maps for computer science.
+7. [ ] Document editor workflow for MacBook.
+8. [ ] Add recurring audit review cadence.
+9. [ ] Decide when the local source-shelf cleanup should be promoted to NAS.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -365,6 +369,7 @@ python3 -m wiki_tool source-shelves summary --json
 python3 -m wiki_tool source-shelves show math --limit 25 --json
 python3 -m wiki_tool source-shelves show computer --limit 25 --json
 python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_reports --limit 25 --json
+python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality stubs --json
 python3 -m wiki_tool page-quality write --output-dir state/page_quality --json
