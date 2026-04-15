@@ -28,6 +28,28 @@ DEFAULT_SPEC_DIR = Path("harness_specs")
 DEFAULT_HARNESS_DB = Path("state/harness.sqlite")
 FENCE_RE = re.compile(r"^```(yaml|yml)\s*$", re.MULTILINE)
 REQUIRED_SPEC_KEYS = {"kind", "id", "version", "description"}
+SUPPORTED_SPEC_KINDS = {"failure_taxonomy", "reasoning_chain", "task_contract"}
+SUPPORTED_SCHEMA_TYPES = {"array", "boolean", "integer", "list", "number", "object", "string"}
+REQUIRED_FAILURE_CODES = {
+    "GROUNDEDNESS_FAIL",
+    "LLM_PROVIDER_CONFIG_MISSING",
+    "LLM_SYNTHESIS_ERROR",
+    "OUTPUT_SCHEMA_INVALID",
+    "RETRIEVAL_EMPTY",
+    "TOOL_CALL_ERROR",
+}
+TASK_CONTRACT_REQUIRED_SECTIONS = {
+    "budgets",
+    "chain",
+    "completion_condition",
+    "inputs",
+    "outputs",
+    "persistence",
+    "retrieval_profile",
+    "tools_allowed",
+    "verification_profile",
+}
+REASONING_CHAIN_STEP_TYPES = {"deterministic", "deterministic_or_llm", "tool"}
 
 
 @dataclass(frozen=True)
@@ -55,34 +77,20 @@ def validate_harness_specs(spec_dir: Path = DEFAULT_SPEC_DIR) -> dict[str, Any]:
         missing = sorted(REQUIRED_SPEC_KEYS - set(spec))
         if missing:
             errors.append(f"{spec.get('id', '<missing>')} missing keys: {', '.join(missing)}")
+        kind = str(spec.get("kind", ""))
+        if kind not in SUPPORTED_SPEC_KINDS:
+            errors.append(f"{spec.get('id', '<missing>')} uses unsupported kind {kind}")
+        if not isinstance(spec.get("version"), int) or int(spec.get("version", 0)) < 1:
+            errors.append(f"{spec.get('id', '<missing>')} version must be a positive integer")
     for contract in registry.specs.get("task_contract", {}).values():
         for version in contract:
-            chain_id = version.get("chain", {}).get("id")
-            if chain_id and chain_id not in registry.specs.get("reasoning_chain", {}):
-                errors.append(f"{version['id']} references missing chain {chain_id}")
+            validate_task_contract_spec(version, registry, errors)
+    for chain in registry.specs.get("reasoning_chain", {}).values():
+        for version in chain:
+            validate_reasoning_chain_spec(version, errors)
     for taxonomy in registry.specs.get("failure_taxonomy", {}).values():
         for version in taxonomy:
-            severities = set(version.get("enums", {}).get("severity", []))
-            actions = set(version.get("enums", {}).get("action", []))
-            seen_codes: set[str] = set()
-            for item in version.get("failures", []):
-                code = str(item.get("code", ""))
-                if not code:
-                    errors.append(f"{version.get('id', '<missing>')} has failure without code")
-                if code in seen_codes:
-                    errors.append(f"{version.get('id', '<missing>')} has duplicate failure code {code}")
-                seen_codes.add(code)
-                severity = str(item.get("severity", ""))
-                if severities and severity not in severities:
-                    errors.append(f"{code} uses unknown severity {severity}")
-                respond = item.get("respond", [])
-                if not isinstance(respond, list) or not respond:
-                    errors.append(f"{code} must define at least one response action")
-                    continue
-                for response in respond:
-                    action = str(response.get("action", "")) if isinstance(response, dict) else ""
-                    if actions and action not in actions:
-                        errors.append(f"{code} uses unknown response action {action}")
+            validate_failure_taxonomy_spec(version, errors)
     return {
         "errors": errors,
         "spec_count": len(registry.all_specs()),
@@ -121,6 +129,216 @@ def load_specs(spec_dir: Path = DEFAULT_SPEC_DIR, *, errors: list[str] | None = 
             spec_id = str(spec.get("id", ""))
             specs.setdefault(kind, {}).setdefault(spec_id, []).append(spec)
     return SpecRegistry(specs=specs)
+
+
+def validate_task_contract_spec(
+    contract: dict[str, Any],
+    registry: SpecRegistry,
+    errors: list[str],
+) -> None:
+    spec_id = str(contract.get("id", "<missing>"))
+    missing_sections = sorted(TASK_CONTRACT_REQUIRED_SECTIONS - set(contract))
+    if missing_sections:
+        errors.append(f"{spec_id} missing contract sections: {', '.join(missing_sections)}")
+
+    validate_field_map(contract.get("inputs"), f"{spec_id}.inputs", errors)
+    validate_field_map(contract.get("outputs"), f"{spec_id}.outputs", errors)
+    validate_positive_integer_map(
+        contract.get("budgets"),
+        f"{spec_id}.budgets",
+        {"max_child_tasks", "max_model_calls", "max_retrieval_k", "max_wall_clock_seconds"},
+        errors,
+    )
+    validate_string_list(contract.get("tools_allowed"), f"{spec_id}.tools_allowed", errors)
+
+    retrieval_profile = contract.get("retrieval_profile")
+    if not isinstance(retrieval_profile, dict):
+        errors.append(f"{spec_id}.retrieval_profile must be an object")
+    else:
+        if not isinstance(retrieval_profile.get("id"), str) or not retrieval_profile.get("id"):
+            errors.append(f"{spec_id}.retrieval_profile.id must be a non-empty string")
+        threshold = retrieval_profile.get("min_score_threshold")
+        if threshold is not None and not isinstance(threshold, (int, float)):
+            errors.append(f"{spec_id}.retrieval_profile.min_score_threshold must be a number")
+
+    chain = contract.get("chain")
+    if not isinstance(chain, dict) or not isinstance(chain.get("id"), str) or not chain.get("id"):
+        errors.append(f"{spec_id}.chain.id must be a non-empty string")
+    elif chain["id"] not in registry.specs.get("reasoning_chain", {}):
+        errors.append(f"{spec_id} references missing chain {chain['id']}")
+
+    verification = contract.get("verification_profile")
+    if not isinstance(verification, dict):
+        errors.append(f"{spec_id}.verification_profile must be an object")
+    else:
+        for key in {"require_groundedness", "require_schema_valid"}:
+            if key in verification and not isinstance(verification[key], bool):
+                errors.append(f"{spec_id}.verification_profile.{key} must be boolean")
+        require_min = verification.get("require_min_citations")
+        if not isinstance(require_min, int) or require_min < 1:
+            errors.append(f"{spec_id}.verification_profile.require_min_citations must be a positive integer")
+
+    persistence = contract.get("persistence")
+    if not isinstance(persistence, dict):
+        errors.append(f"{spec_id}.persistence must be an object")
+    else:
+        for key in {"store_retrieval_candidates", "store_tool_io"}:
+            if key in persistence and not isinstance(persistence[key], bool):
+                errors.append(f"{spec_id}.persistence.{key} must be boolean")
+        retention_days = persistence.get("retention_days_full_trace")
+        if retention_days is not None and (not isinstance(retention_days, int) or retention_days < 1):
+            errors.append(f"{spec_id}.persistence.retention_days_full_trace must be a positive integer")
+
+    completion = contract.get("completion_condition")
+    if not isinstance(completion, dict) or not isinstance(completion.get("all_of"), list) or not completion.get("all_of"):
+        errors.append(f"{spec_id}.completion_condition.all_of must be a non-empty list")
+    elif any(not isinstance(item, str) or not item for item in completion["all_of"]):
+        errors.append(f"{spec_id}.completion_condition.all_of entries must be non-empty strings")
+
+
+def validate_reasoning_chain_spec(chain: dict[str, Any], errors: list[str]) -> None:
+    spec_id = str(chain.get("id", "<missing>"))
+    steps = chain.get("steps")
+    if not isinstance(steps, list) or not steps:
+        errors.append(f"{spec_id}.steps must be a non-empty list")
+        return
+    seen_step_ids: set[str] = set()
+    for index, step in enumerate(steps):
+        path = f"{spec_id}.steps[{index}]"
+        if not isinstance(step, dict):
+            errors.append(f"{path} must be an object")
+            continue
+        step_id = step.get("id")
+        if not isinstance(step_id, str) or not step_id:
+            errors.append(f"{path}.id must be a non-empty string")
+        elif step_id in seen_step_ids:
+            errors.append(f"{spec_id} has duplicate step id {step_id}")
+        else:
+            seen_step_ids.add(step_id)
+        step_type = step.get("type")
+        if step_type not in REASONING_CHAIN_STEP_TYPES:
+            errors.append(f"{path}.type must be one of {', '.join(sorted(REASONING_CHAIN_STEP_TYPES))}")
+        if step_type == "tool" and (not isinstance(step.get("tool_name"), str) or not step.get("tool_name")):
+            errors.append(f"{path}.tool_name is required for tool steps")
+        output_schema = step.get("output_schema")
+        if output_schema is not None:
+            validate_step_output_schema(output_schema, f"{path}.output_schema", errors)
+
+
+def validate_failure_taxonomy_spec(taxonomy: dict[str, Any], errors: list[str]) -> None:
+    spec_id = str(taxonomy.get("id", "<missing>"))
+    enums = taxonomy.get("enums", {})
+    if not isinstance(enums, dict):
+        errors.append(f"{spec_id}.enums must be an object")
+        enums = {}
+    severities = enum_values(enums.get("severity"), f"{spec_id}.enums.severity", errors)
+    actions = enum_values(enums.get("action"), f"{spec_id}.enums.action", errors)
+    failures = taxonomy.get("failures")
+    if not isinstance(failures, list) or not failures:
+        errors.append(f"{spec_id}.failures must be a non-empty list")
+        return
+
+    seen_codes: set[str] = set()
+    for item in failures:
+        if not isinstance(item, dict):
+            errors.append(f"{spec_id} has non-object failure rule")
+            continue
+        code = str(item.get("code", ""))
+        if not code:
+            errors.append(f"{spec_id} has failure without code")
+        if code in seen_codes:
+            errors.append(f"{spec_id} has duplicate failure code {code}")
+        seen_codes.add(code)
+        severity = str(item.get("severity", ""))
+        if severities and severity not in severities:
+            errors.append(f"{code} uses unknown severity {severity}")
+        respond = item.get("respond", [])
+        if not isinstance(respond, list) or not respond:
+            errors.append(f"{code} must define at least one response action")
+            continue
+        for response in respond:
+            action = str(response.get("action", "")) if isinstance(response, dict) else ""
+            if actions and action not in actions:
+                errors.append(f"{code} uses unknown response action {action}")
+
+    missing_runtime_codes = sorted(REQUIRED_FAILURE_CODES - seen_codes)
+    if missing_runtime_codes:
+        errors.append(f"{spec_id} missing runtime failure codes: {', '.join(missing_runtime_codes)}")
+
+
+def validate_field_map(value: Any, path: str, errors: list[str]) -> None:
+    if not isinstance(value, dict) or not value:
+        errors.append(f"{path} must be a non-empty object")
+        return
+    for field_name, schema in value.items():
+        field_path = f"{path}.{field_name}"
+        if not isinstance(field_name, str) or not field_name:
+            errors.append(f"{path} field names must be non-empty strings")
+            continue
+        if not isinstance(schema, dict):
+            errors.append(f"{field_path} must be an object")
+            continue
+        field_type = schema.get("type")
+        if field_type not in SUPPORTED_SCHEMA_TYPES:
+            errors.append(f"{field_path}.type must be one of {', '.join(sorted(SUPPORTED_SCHEMA_TYPES))}")
+        if "required" in schema and not isinstance(schema["required"], bool):
+            errors.append(f"{field_path}.required must be boolean")
+
+
+def validate_positive_integer_map(
+    value: Any,
+    path: str,
+    required_keys: set[str],
+    errors: list[str],
+) -> None:
+    if not isinstance(value, dict):
+        errors.append(f"{path} must be an object")
+        return
+    missing = sorted(required_keys - set(value))
+    if missing:
+        errors.append(f"{path} missing keys: {', '.join(missing)}")
+    for key in required_keys & set(value):
+        if not isinstance(value[key], int) or value[key] < 0:
+            errors.append(f"{path}.{key} must be a non-negative integer")
+
+
+def validate_string_list(value: Any, path: str, errors: list[str]) -> None:
+    if not isinstance(value, list) or not value:
+        errors.append(f"{path} must be a non-empty list")
+        return
+    if any(not isinstance(item, str) or not item for item in value):
+        errors.append(f"{path} entries must be non-empty strings")
+
+
+def validate_step_output_schema(value: Any, path: str, errors: list[str]) -> None:
+    if not isinstance(value, dict):
+        errors.append(f"{path} must be an object")
+        return
+    if value.get("type") != "object":
+        errors.append(f"{path}.type must be object")
+    required_keys = value.get("required_keys")
+    if not isinstance(required_keys, list) or not required_keys:
+        errors.append(f"{path}.required_keys must be a non-empty list")
+    elif any(not isinstance(item, str) or not item for item in required_keys):
+        errors.append(f"{path}.required_keys entries must be non-empty strings")
+
+
+def enum_values(value: Any, path: str, errors: list[str]) -> set[str]:
+    if not isinstance(value, list) or not value:
+        errors.append(f"{path} must be a non-empty list")
+        return set()
+    results: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item:
+            errors.append(f"{path} entries must be non-empty strings")
+            continue
+        if item in seen:
+            errors.append(f"{path} has duplicate value {item}")
+            continue
+        seen.add(item)
+        results.append(item)
+    return set(results)
 
 
 def extract_yaml_blocks(text: str) -> list[str]:
@@ -452,6 +670,7 @@ def run_answer_with_citations(
         adapter = synthesis_adapter or synthesis_adapter_for(synthesis=synthesis, model=llm_model)
         synthesis_attempts: list[dict[str, Any]] = []
         synthesis_failure_actions: list[dict[str, Any]] = []
+        schema_errors: list[str] = []
         schema_valid = False
         max_synthesis_attempts = 2
         attempt = 1
@@ -470,11 +689,13 @@ def run_answer_with_citations(
                     "duration_seconds": round(time.perf_counter() - synthesis_started, 3),
                     "mode": synthesis,
                 }
-                schema_valid = output_schema_valid(outputs)
+                schema_errors = output_schema_errors(outputs, contract=contract, chain=chain)
+                schema_valid = not schema_errors
                 synthesis_attempts.append(
                     {
                         "attempt": attempt,
                         "failure_code": None if schema_valid else "OUTPUT_SCHEMA_INVALID",
+                        "schema_errors": schema_errors,
                         "schema_valid": schema_valid,
                         "status": "ok" if schema_valid else "failed",
                     }
@@ -499,7 +720,14 @@ def run_answer_with_citations(
                     )
                     attempt += 1
                     continue
-                failures.append(failure("s3_synthesize", "OUTPUT_SCHEMA_INVALID", "critical", outputs))
+                failures.append(
+                    failure(
+                        "s3_synthesize",
+                        "OUTPUT_SCHEMA_INVALID",
+                        "critical",
+                        {"outputs": outputs, "schema_errors": schema_errors},
+                    )
+                )
                 if "abort" in failure_response_actions(registry, "OUTPUT_SCHEMA_INVALID"):
                     synthesis_failure_actions.extend(
                         record_failure_actions(
@@ -516,6 +744,7 @@ def run_answer_with_citations(
                 break
             except StructuredSynthesisError as exc:
                 outputs = {}
+                schema_errors = [str(exc)]
                 schema_valid = False
                 synthesis_metadata = {
                     "duration_seconds": round(time.perf_counter() - synthesis_started, 3),
@@ -582,6 +811,7 @@ def run_answer_with_citations(
             output={
                 **outputs,
                 "failure_actions": synthesis_failure_actions,
+                "schema_errors": schema_errors,
                 "schema_valid": schema_valid,
                 "synthesis_attempts": synthesis_attempts,
                 "synthesis_metadata": synthesis_metadata,
@@ -1199,19 +1429,107 @@ def min_citations(contract: dict[str, Any]) -> int:
     return int(contract.get("verification_profile", {}).get("require_min_citations", 1))
 
 
-def output_schema_valid(outputs: dict[str, Any]) -> bool:
+def output_schema_valid(
+    outputs: dict[str, Any],
+    *,
+    contract: dict[str, Any] | None = None,
+    chain: dict[str, Any] | None = None,
+) -> bool:
+    return not output_schema_errors(outputs, contract=contract, chain=chain)
+
+
+def output_schema_errors(
+    outputs: dict[str, Any],
+    *,
+    contract: dict[str, Any] | None = None,
+    chain: dict[str, Any] | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(outputs, dict):
+        return ["outputs must be an object"]
+
+    if chain is not None:
+        output_schema = synthesis_step_output_schema(chain)
+        for key in output_schema.get("required_keys", []):
+            if key not in outputs:
+                errors.append(f"chain output missing required key {key}")
+
+    if contract is not None:
+        validate_runtime_field_map(outputs, contract.get("outputs"), "contract.outputs", errors)
+    else:
+        if not isinstance(outputs.get("answer_markdown"), str):
+            errors.append("answer_markdown must be a string")
+        if not isinstance(outputs.get("citations"), list):
+            errors.append("citations must be an array")
+
     citations = outputs.get("citations")
-    if not isinstance(outputs.get("answer_markdown"), str) or not isinstance(citations, list):
-        return False
+    if not isinstance(citations, list):
+        return errors
     required = {"artifact_id", "chunk_id", "quote", "relevance_note"}
-    for citation in citations:
+    for index, citation in enumerate(citations):
         if not isinstance(citation, dict):
-            return False
-        if not required <= set(citation):
-            return False
-        if any(not isinstance(citation[key], str) for key in required):
-            return False
-    return True
+            errors.append(f"citations[{index}] must be an object")
+            continue
+        missing = sorted(required - set(citation))
+        if missing:
+            errors.append(f"citations[{index}] missing keys: {', '.join(missing)}")
+            continue
+        for key in sorted(required):
+            if not isinstance(citation[key], str):
+                errors.append(f"citations[{index}].{key} must be a string")
+    return errors
+
+
+def synthesis_step_output_schema(chain: dict[str, Any]) -> dict[str, Any]:
+    steps = chain.get("steps", [])
+    if not isinstance(steps, list):
+        return {}
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step.get("id") == "s3_synthesize" or step.get("tool_name") == "llm.structured_synthesis":
+            output_schema = step.get("output_schema")
+            return output_schema if isinstance(output_schema, dict) else {}
+    return {}
+
+
+def validate_runtime_field_map(
+    outputs: dict[str, Any],
+    field_map: Any,
+    path: str,
+    errors: list[str],
+) -> None:
+    if not isinstance(field_map, dict):
+        errors.append(f"{path} must be an object")
+        return
+    for field, schema in field_map.items():
+        if not isinstance(schema, dict):
+            errors.append(f"{path}.{field} must be an object")
+            continue
+        required = bool(schema.get("required", False))
+        if field not in outputs:
+            if required:
+                errors.append(f"{field} is required")
+            continue
+        expected_type = schema.get("type")
+        if not runtime_type_matches(outputs[field], str(expected_type)):
+            errors.append(f"{field} must be {expected_type}")
+
+
+def runtime_type_matches(value: Any, expected_type: str) -> bool:
+    if expected_type in {"array", "list"}:
+        return isinstance(value, list)
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected_type == "object":
+        return isinstance(value, dict)
+    if expected_type == "string":
+        return isinstance(value, str)
+    return False
 
 
 def normalize_quote(value: str) -> str:

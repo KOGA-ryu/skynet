@@ -14,12 +14,14 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Broken actionable links: 0.
 - [x] Excluded template placeholder links: 34.
 - [x] Catalog size: 845 documents, 4,258 links, 6,659 spans, 7,482 symbols.
-- [x] Latest scan run: `scan:20260415T101814Z:f4351838b68707a7`.
-- [x] Latest harness run: `run:20260415T101814Z:838b2e4cc6371c4c`.
+- [x] Latest scan run: `scan:20260415T102707Z:f4351838b68707a7`.
+- [x] Latest harness run: `run:20260415T102707Z:838b2e4cc6371c4c`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `891ce9e` (`Add patch bundle root preflight`).
-- [ ] Current active task: tighten contract and schema validation.
+- [ ] Current active task: add trace diffing between harness runs.
+- [x] Contract/schema validation status: complete; harness specs and synthesis
+  outputs now fail closed against stricter declared schemas.
 - [x] Root preflight implementation status: complete; real applies now require
   bundle/catalog roots to match `--wiki-root`.
 - [x] Local mirror status: complete, with `state/wiki_mirror/` refreshed from
@@ -147,7 +149,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Add structured-output LLM adapter behind the synthesis step.
 - [x] Add failure-taxonomy action engine for retries and fallback behavior.
 - [x] Add retrieval fallback chain when the first query misses.
-- [ ] Tighten contract and schema validation.
+- [x] Tighten contract and schema validation.
 - [ ] Add trace diffing between harness runs.
 
 ## Phase 5: Retrieval Quality And Evals
@@ -225,16 +227,16 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Tighten contract and schema validation.
-2. [ ] Add trace diffing between harness runs.
-3. [ ] Add backup restore docs.
-4. [ ] Add broken-link regression scoring to eval reports.
-5. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
-6. [ ] Add release notes for the first usable build.
-7. [ ] Build a report of generated stubs that still need human content.
-8. [ ] Add project-level librarian reports.
-9. [ ] Add stale-scan detection when the NAS has changed after the last catalog
+1. [ ] Add trace diffing between harness runs.
+2. [ ] Add backup restore docs.
+3. [ ] Add broken-link regression scoring to eval reports.
+4. [ ] Add bounded JSON-RPC methods for `harness.run` and `harness.show`.
+5. [ ] Add release notes for the first usable build.
+6. [ ] Build a report of generated stubs that still need human content.
+7. [ ] Add project-level librarian reports.
+8. [ ] Add stale-scan detection when the NAS has changed after the last catalog
    build.
+9. [ ] Compare retrieval profiles before changing search behavior.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
