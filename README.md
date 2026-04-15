@@ -34,8 +34,12 @@ python3 -m wiki_tool project-reports write --output-dir state/project_reports --
 python3 -m wiki_tool devrefs audit --json
 python3 -m wiki_tool devrefs bundle --output patch_bundles/devrefs_preview.json --json
 python3 -m wiki_tool patch-bundle validate patch_bundles/devrefs_preview.json --wiki-root /Volumes/wiki --json
+python3 -m wiki_tool patch-bundle report patch_bundles/devrefs_preview.json --wiki-root /Volumes/wiki --json
 python3 -m wiki_tool patch-bundle apply patch_bundles/devrefs_preview.json --wiki-root /Volumes/wiki --dry-run --json
 python3 -m wiki_tool patch-bundle apply patch_bundles/devrefs_preview.json --wiki-root /Volumes/wiki --json
+python3 -m wiki_tool patch-bundle report backups/<bundle>/manifest.json --wiki-root /Volumes/wiki --json
+python3 -m wiki_tool patch-bundle rollback backups/<bundle>/manifest.json --wiki-root /Volumes/wiki --dry-run --json
+python3 -m wiki_tool patch-bundle rollback backups/<bundle>/manifest.json --wiki-root /Volumes/wiki --json
 python3 -m wiki_tool open dev://RD_UI/qml/Main.qml --platform mac --json
 python3 -m wiki_tool missing-notes audit --json
 python3 -m wiki_tool missing-notes bundle --output patch_bundles/missing_notes_preview.json --json
@@ -94,6 +98,8 @@ Design rules:
 - Alias maps are source-controlled read-layer metadata.
 - Project reports are local read-layer outputs unless explicitly promoted
   through a later review workflow.
+- Applied patch manifests can be reported and rolled back. Rollback verifies
+  current file hashes before restoring backups or deleting generated stubs.
 - No mass frontmatter rollout.
 - No embeddings-first retrieval.
 - Multi-file edits should go through local patch bundles and backups before any

@@ -19,7 +19,8 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
 - [x] Latest source checkpoint: `ca6fae6` (`Add per-project wiki reports`).
-- [ ] Current active task: add patch-bundle rollback and bundle report commands.
+- [ ] Current active task: add a single health command for scan, audit, harness
+  validation, and unit tests.
 - [x] Project report implementation status: complete, with 7 top-level projects
   summarized and local reports written under `state/project_reports/`.
 - [x] Alias map implementation status: complete, with 6 validated source
@@ -37,7 +38,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Use `dev://<repo>/<path>` for links into local development repos.
 - [x] Keep Windows dev-root configuration local in `state/devrefs_config.json`.
 - [x] Persist executable harness traces in `state/harness.sqlite`.
-- [ ] Add rollback and restore instructions before larger NAS edit waves.
+- [x] Add rollback and restore instructions before larger NAS edit waves.
 
 ## Phase 0: Orientation And Safety Rails
 
@@ -117,8 +118,8 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Implement target type: `create_markdown_stub`.
 - [x] Preserve reviewable bundle files under `patch_bundles/`.
 - [x] Preserve applied bundle backups under `backups/`.
-- [ ] Add rollback command that can restore files from a bundle manifest.
-- [ ] Add bundle report command that summarizes changed files and target types.
+- [x] Add rollback command that can restore files from a bundle manifest.
+- [x] Add bundle report command that summarizes changed files and target types.
 - [ ] Add richer bundle schema docs.
 - [ ] Add preflight check that refuses writes when catalog root and bundle root
   disagree.
@@ -220,17 +221,17 @@ as tasks move from planned work into implemented, verified tooling.
 
 ## Next 10 Tasks
 
-1. [ ] Add patch-bundle rollback and bundle report commands.
-2. [ ] Add a single health command for scan, audit, harness validation, and
+1. [ ] Add a single health command for scan, audit, harness validation, and
    unit tests.
-3. [ ] Add structured-output LLM adapter behind the harness synthesis step.
-4. [ ] Add failure-taxonomy retry and fallback behavior.
-5. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
-6. [ ] Build eval runner and recurring retrieval quality report.
-7. [ ] Add the first bounded knowledge API surface.
-8. [ ] Add install/setup instructions.
-9. [ ] Add page quality reports for thin notes, missing summaries, and unclear
+2. [ ] Add structured-output LLM adapter behind the harness synthesis step.
+3. [ ] Add failure-taxonomy retry and fallback behavior.
+4. [ ] Expand `eval/wiki_queries_v1.jsonl` to at least 30 examples.
+5. [ ] Build eval runner and recurring retrieval quality report.
+6. [ ] Add the first bounded knowledge API surface.
+7. [ ] Add install/setup instructions.
+8. [ ] Add page quality reports for thin notes, missing summaries, and unclear
    hub pages.
+9. [ ] Add richer bundle schema docs.
 10. [ ] Revisit PC access after the Windows-to-Linux decision is final.
 
 ## Core Commands
@@ -268,6 +269,9 @@ Patch bundles:
 
 ```bash
 python3 -m wiki_tool patch-bundle validate <bundle.json> --wiki-root /Volumes/wiki --json
+python3 -m wiki_tool patch-bundle report <bundle.json> --wiki-root /Volumes/wiki --json
 python3 -m wiki_tool patch-bundle apply <bundle.json> --wiki-root /Volumes/wiki --dry-run --json
 python3 -m wiki_tool patch-bundle apply <bundle.json> --wiki-root /Volumes/wiki --json
+python3 -m wiki_tool patch-bundle report backups/<bundle>/manifest.json --wiki-root /Volumes/wiki --json
+python3 -m wiki_tool patch-bundle rollback backups/<bundle>/manifest.json --wiki-root /Volumes/wiki --dry-run --json
 ```

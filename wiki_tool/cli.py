@@ -41,7 +41,12 @@ from wiki_tool.harness import (
     validate_harness_specs,
 )
 from wiki_tool.missing_notes import build_missing_notes_patch_bundle, missing_note_audit
-from wiki_tool.patch_bundle import apply_patch_bundle, validate_patch_bundle
+from wiki_tool.patch_bundle import (
+    apply_patch_bundle,
+    report_patch_bundle,
+    rollback_patch_bundle,
+    validate_patch_bundle,
+)
 from wiki_tool.project_reports import (
     DEFAULT_PROJECT_REPORT_DIR,
     project_report,
@@ -229,6 +234,17 @@ def build_parser() -> argparse.ArgumentParser:
     apply_cmd.add_argument("--backup-dir", type=Path, default=Path("backups"))
     apply_cmd.add_argument("--dry-run", action="store_true")
     apply_cmd.set_defaults(func=cmd_patch_apply)
+    report = patch_sub.add_parser("report", help="summarize a patch bundle or applied manifest")
+    add_json_flag(report)
+    report.add_argument("path", type=Path)
+    report.add_argument("--wiki-root", type=Path)
+    report.set_defaults(func=cmd_patch_report)
+    rollback = patch_sub.add_parser("rollback", help="restore files from an applied bundle manifest")
+    add_json_flag(rollback)
+    rollback.add_argument("manifest", type=Path)
+    rollback.add_argument("--wiki-root", type=Path, required=True)
+    rollback.add_argument("--dry-run", action="store_true")
+    rollback.set_defaults(func=cmd_patch_rollback)
 
     return parser
 
@@ -436,6 +452,18 @@ def cmd_patch_apply(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def cmd_patch_report(args: argparse.Namespace) -> dict[str, Any]:
+    return report_patch_bundle(args.path, wiki_root=args.wiki_root)
+
+
+def cmd_patch_rollback(args: argparse.Namespace) -> dict[str, Any]:
+    return rollback_patch_bundle(
+        args.manifest,
+        wiki_root=args.wiki_root,
+        dry_run=args.dry_run,
+    )
+
+
 def print_payload(payload: Any, *, json_output: bool) -> None:
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -503,6 +531,13 @@ def compact(value: Any) -> str:
             "inbound_count",
             "source_path",
             "line_count",
+            "action",
+            "status",
+            "changed",
+            "target_count",
+            "file_count",
+            "blocked_count",
+            "ready_count",
         ]
         parts = [f"{key}={value[key]!r}" for key in preferred if key in value]
         return ", ".join(parts) if parts else json.dumps(value, sort_keys=True)

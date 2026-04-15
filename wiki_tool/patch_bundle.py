@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -181,6 +181,258 @@ def apply_patch_bundle(
         "target_count": len(targets),
         "would_write": not dry_run,
     }
+
+
+def report_patch_bundle(path: Path, *, wiki_root: Path | None = None) -> dict[str, Any]:
+    payload = json.loads(path.read_text())
+    if isinstance(payload.get("targets"), list):
+        return report_bundle_payload(path, payload, wiki_root=wiki_root)
+    if isinstance(payload.get("files"), list):
+        return report_manifest_payload(path, payload, wiki_root=wiki_root)
+    raise ValueError("path is neither a patch bundle nor an applied manifest")
+
+
+def rollback_patch_bundle(
+    manifest_path: Path,
+    *,
+    wiki_root: Path,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    payload = json.loads(manifest_path.read_text())
+    if not isinstance(payload.get("files"), list):
+        raise ValueError("rollback requires an applied manifest with a files list")
+
+    report = report_manifest_payload(manifest_path, payload, wiki_root=wiki_root)
+    blockers = [item for item in report["files"] if str(item["status"]).startswith("blocked")]
+    result = {
+        "blocked_count": len(blockers),
+        "bundle_id": payload.get("bundle_id"),
+        "dry_run": dry_run,
+        "file_count": len(report["files"]),
+        "manifest_path": str(manifest_path),
+        "rolled_back": False,
+        "actions": [],
+    }
+    if blockers:
+        result["blocked"] = blockers
+        if dry_run:
+            return result
+        details = "; ".join(f"{item.get('path')}: {item['status']}" for item in blockers[:5])
+        raise ValueError(f"rollback blocked: {details}")
+
+    for item in report["files"]:
+        action = item["action"]
+        status = item["status"]
+        rel_path = str(item["path"])
+        if status == "already_missing":
+            result["actions"].append(
+                {"action": "delete", "changed": False, "path": rel_path, "status": status}
+            )
+            continue
+        if status != "ready":
+            result["actions"].append(
+                {"action": action, "changed": False, "path": rel_path, "status": status}
+            )
+            continue
+
+        target = safe_wiki_target(wiki_root, rel_path)
+        if action == "create":
+            result["actions"].append(
+                {"action": "delete", "changed": True, "path": rel_path, "status": status}
+            )
+            if not dry_run:
+                target.unlink()
+            continue
+
+        backup_path = resolve_backup_path(item["backup_path"], manifest_path)
+        result["actions"].append(
+            {"action": "restore", "changed": True, "path": rel_path, "status": status}
+        )
+        if not dry_run:
+            target.write_bytes(backup_path.read_bytes())
+
+    result["rolled_back"] = not dry_run
+    return result
+
+
+def report_bundle_payload(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    wiki_root: Path | None,
+) -> dict[str, Any]:
+    targets = payload.get("targets", [])
+    target_types: Counter[str] = Counter()
+    affected_paths: set[str] = set()
+    if isinstance(targets, list):
+        for target in targets:
+            if not isinstance(target, dict):
+                target_types["<invalid>"] += 1
+                continue
+            target_types[str(target.get("type", "<missing>"))] += 1
+            affected = target.get("source_path") or target.get("path")
+            if affected:
+                affected_paths.add(str(affected))
+    validation = validate_patch_bundle(path, wiki_root=wiki_root)
+    return {
+        "affected_paths": sorted(affected_paths),
+        "backup_manifest": payload.get("backup_manifest"),
+        "bundle_id": payload.get("bundle_id"),
+        "kind": "patch_bundle",
+        "path": str(path),
+        "rationale": payload.get("rationale"),
+        "target_count": len(targets) if isinstance(targets, list) else 0,
+        "target_types": [
+            {"type": kind, "count": count} for kind, count in sorted(target_types.items())
+        ],
+        "valid": validation["valid"],
+        "validation_errors": validation["errors"],
+    }
+
+
+def report_manifest_payload(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    wiki_root: Path | None,
+) -> dict[str, Any]:
+    files = payload.get("files", [])
+    if not isinstance(files, list):
+        files = []
+    file_reports = [
+        manifest_file_status(entry, manifest_path=path, wiki_root=wiki_root)
+        for entry in files
+        if isinstance(entry, dict)
+    ]
+    statuses: Counter[str] = Counter(str(item["status"]) for item in file_reports)
+    actions: Counter[str] = Counter(str(item["action"]) for item in file_reports)
+    return {
+        "actions": [{"action": action, "count": count} for action, count in sorted(actions.items())],
+        "applied_at_utc": payload.get("applied_at_utc"),
+        "blocked_count": sum(
+            count for status, count in statuses.items() if status.startswith("blocked")
+        ),
+        "bundle_id": payload.get("bundle_id"),
+        "bundle_path": payload.get("bundle_path"),
+        "checked_wiki_root": str(wiki_root) if wiki_root is not None else None,
+        "file_count": len(file_reports),
+        "files": file_reports,
+        "kind": "patch_manifest",
+        "manifest_path": str(path),
+        "ready_count": statuses.get("ready", 0),
+        "status_counts": [
+            {"status": status, "count": count} for status, count in sorted(statuses.items())
+        ],
+        "wiki_root": payload.get("wiki_root"),
+    }
+
+
+def manifest_file_status(
+    entry: dict[str, Any],
+    *,
+    manifest_path: Path,
+    wiki_root: Path | None,
+) -> dict[str, Any]:
+    rel_path = entry.get("path")
+    action = manifest_action(entry)
+    expected_current_sha256 = expected_manifest_current_sha256(entry)
+    raw_backup_path = entry.get("backup_path")
+    backup_path = resolve_backup_path(raw_backup_path, manifest_path) if raw_backup_path else None
+    backup_sha256 = None
+    backup_exists = backup_path.exists() if backup_path is not None else False
+    if backup_exists:
+        backup_sha256 = sha256_file(backup_path)
+
+    status = "unchecked"
+    current_exists = None
+    current_sha256 = None
+
+    if rel_path is None:
+        status = "blocked_missing_path"
+    elif action not in {"replace", "create"}:
+        status = "blocked_unsupported_action"
+    elif action == "replace" and backup_path is None:
+        status = "blocked_missing_backup"
+    elif action == "replace" and not backup_exists:
+        status = "blocked_missing_backup"
+    elif action == "replace" and entry.get("old_sha256") and backup_sha256 != entry.get("old_sha256"):
+        status = "blocked_backup_hash_mismatch"
+    elif expected_current_sha256 is None:
+        status = "blocked_missing_expected_hash"
+    elif wiki_root is not None:
+        try:
+            target = safe_wiki_target(wiki_root, str(rel_path))
+        except ValueError:
+            status = "blocked_unsafe_path"
+        else:
+            current_exists = target.exists()
+            if action == "create" and not current_exists:
+                status = "already_missing"
+            elif action == "replace" and not current_exists:
+                status = "blocked_current_missing"
+            else:
+                current_sha256 = sha256_file(target)
+                if current_sha256 != expected_current_sha256:
+                    status = "blocked_current_mismatch"
+                else:
+                    status = "ready"
+
+    return {
+        "action": action,
+        "backup_exists": backup_exists if backup_path is not None else None,
+        "backup_path": str(backup_path) if backup_path is not None else None,
+        "backup_sha256": backup_sha256,
+        "current_exists": current_exists,
+        "current_sha256": current_sha256,
+        "expected_current_sha256": expected_current_sha256,
+        "old_sha256": entry.get("old_sha256"),
+        "path": rel_path,
+        "status": status,
+    }
+
+
+def manifest_action(entry: dict[str, Any]) -> str:
+    action = entry.get("action")
+    if action:
+        return str(action)
+    if entry.get("backup_path"):
+        return "replace"
+    return "unknown"
+
+
+def expected_manifest_current_sha256(entry: dict[str, Any]) -> str | None:
+    value = entry.get("new_sha256") or entry.get("current_sha256")
+    return str(value) if value else None
+
+
+def resolve_backup_path(raw_path: Any, manifest_path: Path) -> Path:
+    path = Path(str(raw_path))
+    if path.is_absolute():
+        return path
+    candidates = [Path.cwd() / path, manifest_path.parent / path]
+    parts = path.parts
+    if len(parts) >= 2 and parts[1] == manifest_path.parent.name:
+        backup_root_parent = manifest_path.parent.parent
+        if parts[0] == backup_root_parent.name:
+            candidates.append(backup_root_parent.parent / path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def safe_wiki_target(wiki_root: Path, rel_path: str) -> Path:
+    path = Path(rel_path)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"path must be wiki-relative: {rel_path}")
+    target = (wiki_root / path).resolve()
+    if not target.is_relative_to(wiki_root.resolve()):
+        raise ValueError(f"path escapes wiki root: {rel_path}")
+    return target
+
+
+def sha256_file(path: Path) -> str:
+    return sha256(path.read_bytes()).hexdigest()
 
 
 def safe_path_component(value: str) -> str:
