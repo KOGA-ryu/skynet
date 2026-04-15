@@ -18,7 +18,7 @@ as tasks move from planned work into implemented, verified tooling.
 - [x] Latest harness run: `run:20260415T091149Z:897e722f4b59f5ea`.
 - [x] Latest harness task: `wiki.answer_with_citations`.
 - [x] Latest harness status: pass.
-- [x] Latest source checkpoint: `45adfe3` (`Add page quality reports`).
+- [x] Latest source checkpoint: `b7476e9` (`Document patch bundle schema`).
 - [ ] Current active task: add preflight check that refuses writes when catalog
   root and bundle root disagree.
 - [x] Project report implementation status: complete, with 7 top-level projects
