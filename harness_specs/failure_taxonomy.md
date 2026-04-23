@@ -25,6 +25,12 @@ failures:
     respond:
       - action: expand_retrieval
       - action: retry
+  - code: CLAIM_PLAN_INVALID
+    severity: high
+    description: Local claim plan failed validation or referenced invalid spans.
+    respond:
+      - action: retry
+      - action: abort
   - code: OUTPUT_SCHEMA_INVALID
     severity: critical
     description: Output failed required-field validation.

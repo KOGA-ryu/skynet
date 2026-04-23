@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "environment_id": "env_replace_me",
+  "environment_label": "suits",
+  "allowed_fetch_remote_identities": [
+    "github.com/kogaryu/skynet"
+  ]
+}

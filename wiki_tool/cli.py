@@ -39,7 +39,9 @@ from wiki_tool.eval import (
     DEFAULT_CLEANUP_TARGET_LIMIT,
     DEFAULT_EVAL_FILE,
     DEFAULT_EVAL_REPORT_DIR,
+    DEFAULT_TRAINING_EXPORT_DIR,
     eval_cleanup_targets,
+    export_training_examples,
     run_eval,
 )
 from wiki_tool.file_links import build_file_links_patch_bundle, file_link_audit
@@ -51,6 +53,18 @@ from wiki_tool.harness import (
     list_harness_runs,
     run_answer_with_citations,
     validate_harness_specs,
+)
+from wiki_tool.flashcards import (
+    BOTH_PROFILES,
+    DEFAULT_FLASHCARD_DIR,
+    DEFAULT_SHOW_PROFILE,
+    DEFAULT_SUMMARY_PROFILE,
+    DEFAULT_WRITE_PROFILE,
+    EXPANDED_PROFILE,
+    STRICT_PROFILE,
+    flashcard_chain,
+    flashcard_summary,
+    write_flashcard_exports,
 )
 from wiki_tool.health import DEFAULT_TESTS_DIR, run_health
 from wiki_tool.intake import (
@@ -100,6 +114,37 @@ from wiki_tool.source_shelves import (
     source_shelf_report,
     source_shelf_summary,
     write_source_shelf_reports,
+)
+from wiki_tool.study_streams import (
+    ALL_STRUCTURED_SELECTION,
+    CANONICAL_TARGET,
+    CARDS_VIEW,
+    DEFAULT_STUDY_DIR,
+    DEFAULT_STUDY_SOURCE_ROOT,
+    DEFAULT_STUDY_EXPORT_TARGET,
+    DEFAULT_STUDY_SELECTION,
+    DEFAULT_STUDY_SHELF,
+    DEFAULT_STUDY_VIEW,
+    DISCOFLASH_TARGET,
+    MAINTAINED_ONLY_SELECTION,
+    probe_study_source_roots,
+    READER_VIEW,
+    build_study_materials,
+    export_study_materials,
+    study_inventory,
+    study_view,
+)
+from wiki_tool.study_quality import (
+    DEFAULT_STUDY_QA_DIR,
+    study_quality_show,
+    study_quality_summary,
+    write_study_quality_reports,
+)
+from wiki_tool.study_pages import (
+    DEFAULT_STUDY_PAGES_WIKI_ROOT,
+    build_study_pages,
+    study_page_show,
+    study_page_summary,
 )
 
 
@@ -205,6 +250,147 @@ def build_parser() -> argparse.ArgumentParser:
     source_shelves_bridge.add_argument("shelf", choices=["math", "computer"])
     source_shelves_bridge.add_argument("--output", type=Path)
     source_shelves_bridge.set_defaults(func=cmd_source_shelves_bridge_bundle)
+
+    flashcards = sub.add_parser("flashcards", help="local math flashcard-chain exports")
+    add_json_flag(flashcards)
+    flashcards_sub = flashcards.add_subparsers(required=True)
+    flashcards_summary = flashcards_sub.add_parser("summary", help="summarize derived math flashcard exports")
+    add_json_flag(flashcards_summary)
+    flashcards_summary.add_argument(
+        "--profile",
+        choices=[STRICT_PROFILE, EXPANDED_PROFILE, BOTH_PROFILES],
+        default=DEFAULT_SUMMARY_PROFILE,
+    )
+    flashcards_summary.set_defaults(func=cmd_flashcards_summary)
+    flashcards_show = flashcards_sub.add_parser("show", help="show one book flashcard chain")
+    add_json_flag(flashcards_show)
+    flashcards_show.add_argument("book")
+    flashcards_show.add_argument(
+        "--profile",
+        choices=[STRICT_PROFILE, EXPANDED_PROFILE],
+        default=DEFAULT_SHOW_PROFILE,
+    )
+    flashcards_show.set_defaults(func=cmd_flashcards_show)
+    flashcards_write = flashcards_sub.add_parser("write", help="write local flashcard exports")
+    add_json_flag(flashcards_write)
+    flashcards_write.add_argument("--output-dir", type=Path, default=DEFAULT_FLASHCARD_DIR)
+    flashcards_write.add_argument(
+        "--profile",
+        choices=[STRICT_PROFILE, EXPANDED_PROFILE, BOTH_PROFILES],
+        default=DEFAULT_WRITE_PROFILE,
+    )
+    flashcards_write.set_defaults(func=cmd_flashcards_write)
+
+    study = sub.add_parser("study", help="front-to-back study corpus exports for the local math corpus")
+    add_json_flag(study)
+    study_sub = study.add_subparsers(required=True)
+    study_probe_cmd = study_sub.add_parser("probe-source-root", help="score candidate extract roots against the maintained math shelf")
+    add_json_flag(study_probe_cmd)
+    study_probe_cmd.add_argument("--path", type=Path, action="append", required=True)
+    study_probe_cmd.add_argument("--book")
+    study_probe_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_probe_cmd.set_defaults(func=cmd_study_probe_source_root)
+    study_inventory_cmd = study_sub.add_parser("inventory", help="inspect local math-corpus extract availability")
+    add_json_flag(study_inventory_cmd)
+    study_inventory_cmd.add_argument("--source-root", type=Path, default=DEFAULT_STUDY_SOURCE_ROOT)
+    study_inventory_cmd.add_argument("--book")
+    study_inventory_cmd.add_argument(
+        "--selection",
+        choices=[ALL_STRUCTURED_SELECTION, MAINTAINED_ONLY_SELECTION],
+        default=DEFAULT_STUDY_SELECTION,
+    )
+    study_inventory_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_inventory_cmd.set_defaults(func=cmd_study_inventory)
+    study_build_cmd = study_sub.add_parser("build", help="build canonical reader and card artifacts")
+    add_json_flag(study_build_cmd)
+    study_build_cmd.add_argument("--source-root", type=Path, default=DEFAULT_STUDY_SOURCE_ROOT)
+    study_build_cmd.add_argument("--book")
+    study_build_cmd.add_argument(
+        "--selection",
+        choices=[ALL_STRUCTURED_SELECTION, MAINTAINED_ONLY_SELECTION],
+        default=DEFAULT_STUDY_SELECTION,
+    )
+    study_build_cmd.add_argument("--output-dir", type=Path, default=DEFAULT_STUDY_DIR)
+    study_build_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_build_cmd.set_defaults(func=cmd_study_build)
+    study_show_cmd = study_sub.add_parser("show", help="show one built book reader stream or card deck")
+    add_json_flag(study_show_cmd)
+    study_show_cmd.add_argument("book")
+    study_show_cmd.add_argument("--output-dir", type=Path, default=DEFAULT_STUDY_DIR)
+    study_show_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_show_cmd.add_argument("--view", choices=[READER_VIEW, CARDS_VIEW], default=DEFAULT_STUDY_VIEW)
+    study_show_cmd.set_defaults(func=cmd_study_show)
+    study_export_cmd = study_sub.add_parser("export", help="export canonical or app-specific study artifacts")
+    add_json_flag(study_export_cmd)
+    study_export_cmd.add_argument("--source-root", type=Path, default=DEFAULT_STUDY_SOURCE_ROOT)
+    study_export_cmd.add_argument("--output-dir", type=Path, default=DEFAULT_STUDY_DIR)
+    study_export_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_export_cmd.add_argument("--target", choices=[CANONICAL_TARGET, DISCOFLASH_TARGET], default=DEFAULT_STUDY_EXPORT_TARGET)
+    export_selection = study_export_cmd.add_mutually_exclusive_group(required=True)
+    export_selection.add_argument("--book")
+    export_selection.add_argument("--all", action="store_true")
+    study_export_cmd.set_defaults(func=cmd_study_export)
+    study_qa_cmd = study_sub.add_parser("qa", help="audit built study artifacts for reader and deck quality")
+    add_json_flag(study_qa_cmd)
+    study_qa_sub = study_qa_cmd.add_subparsers(required=True)
+    study_qa_summary_cmd = study_qa_sub.add_parser("summary", help="summarize study QA findings across the local corpus")
+    add_json_flag(study_qa_summary_cmd)
+    study_qa_summary_cmd.add_argument("--output-dir", type=Path, default=DEFAULT_STUDY_DIR)
+    study_qa_summary_cmd.add_argument("--qa-output-dir", type=Path, default=DEFAULT_STUDY_QA_DIR)
+    study_qa_summary_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_qa_summary_cmd.set_defaults(func=cmd_study_qa_summary)
+    study_qa_show_cmd = study_qa_sub.add_parser("show", help="show one book's study QA packet")
+    add_json_flag(study_qa_show_cmd)
+    study_qa_show_cmd.add_argument("book")
+    study_qa_show_cmd.add_argument("--output-dir", type=Path, default=DEFAULT_STUDY_DIR)
+    study_qa_show_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_qa_show_cmd.set_defaults(func=cmd_study_qa_show)
+    study_qa_write_cmd = study_qa_sub.add_parser("write", help="write local study QA reports")
+    add_json_flag(study_qa_write_cmd)
+    study_qa_write_cmd.add_argument("--output-dir", type=Path, default=DEFAULT_STUDY_DIR)
+    study_qa_write_cmd.add_argument("--qa-output-dir", type=Path, default=DEFAULT_STUDY_QA_DIR)
+    study_qa_write_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_qa_write_cmd.set_defaults(func=cmd_study_qa_write)
+    study_pages_cmd = study_sub.add_parser("pages", help="generate wiki pages from the built study corpus")
+    add_json_flag(study_pages_cmd)
+    study_pages_sub = study_pages_cmd.add_subparsers(required=True)
+    study_pages_summary_cmd = study_pages_sub.add_parser("summary", help="summarize generated study-page inputs")
+    add_json_flag(study_pages_summary_cmd)
+    study_pages_summary_cmd.add_argument("--source-root", type=Path, default=DEFAULT_STUDY_SOURCE_ROOT)
+    study_pages_summary_cmd.add_argument("--output-dir", type=Path, default=DEFAULT_STUDY_DIR)
+    study_pages_summary_cmd.add_argument("--wiki-root", type=Path, default=DEFAULT_STUDY_PAGES_WIKI_ROOT)
+    study_pages_summary_cmd.add_argument(
+        "--selection",
+        choices=[ALL_STRUCTURED_SELECTION, MAINTAINED_ONLY_SELECTION],
+        default=DEFAULT_STUDY_SELECTION,
+    )
+    study_pages_summary_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_pages_summary_cmd.set_defaults(func=cmd_study_pages_summary)
+    study_pages_show_cmd = study_pages_sub.add_parser("show", help="show one generated study-page packet")
+    add_json_flag(study_pages_show_cmd)
+    study_pages_show_cmd.add_argument("book")
+    study_pages_show_cmd.add_argument("--source-root", type=Path, default=DEFAULT_STUDY_SOURCE_ROOT)
+    study_pages_show_cmd.add_argument("--output-dir", type=Path, default=DEFAULT_STUDY_DIR)
+    study_pages_show_cmd.add_argument("--wiki-root", type=Path, default=DEFAULT_STUDY_PAGES_WIKI_ROOT)
+    study_pages_show_cmd.add_argument(
+        "--selection",
+        choices=[ALL_STRUCTURED_SELECTION, MAINTAINED_ONLY_SELECTION],
+        default=DEFAULT_STUDY_SELECTION,
+    )
+    study_pages_show_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_pages_show_cmd.set_defaults(func=cmd_study_pages_show)
+    study_pages_build_cmd = study_pages_sub.add_parser("build", help="write generated study pages into the wiki mirror")
+    add_json_flag(study_pages_build_cmd)
+    study_pages_build_cmd.add_argument("--source-root", type=Path, default=DEFAULT_STUDY_SOURCE_ROOT)
+    study_pages_build_cmd.add_argument("--output-dir", type=Path, default=DEFAULT_STUDY_DIR)
+    study_pages_build_cmd.add_argument("--wiki-root", type=Path, default=DEFAULT_STUDY_PAGES_WIKI_ROOT)
+    study_pages_build_cmd.add_argument(
+        "--selection",
+        choices=[ALL_STRUCTURED_SELECTION, MAINTAINED_ONLY_SELECTION],
+        default=DEFAULT_STUDY_SELECTION,
+    )
+    study_pages_build_cmd.add_argument("--shelf", choices=[DEFAULT_STUDY_SHELF], default=DEFAULT_STUDY_SHELF)
+    study_pages_build_cmd.set_defaults(func=cmd_study_pages_build)
 
     page_quality = sub.add_parser("page-quality", help="page quality reports for librarian review")
     add_json_flag(page_quality)
@@ -370,6 +556,14 @@ def build_parser() -> argparse.ArgumentParser:
     eval_run.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
     eval_run.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
     eval_run.add_argument("--spec-dir", type=Path, default=DEFAULT_SPEC_DIR)
+    eval_run.add_argument("--split", choices=["train", "dev", "holdout"])
+    eval_run.add_argument(
+        "--synthesis",
+        choices=["deterministic", "local", "openai"],
+        default="deterministic",
+        help="synthesis adapter to evaluate through the harness",
+    )
+    eval_run.add_argument("--llm-model", default=None)
     eval_run.add_argument("--limit", type=int)
     eval_run.add_argument("--write-report", action="store_true")
     eval_run.add_argument("--report-dir", type=Path, default=DEFAULT_EVAL_REPORT_DIR)
@@ -397,6 +591,23 @@ def build_parser() -> argparse.ArgumentParser:
     eval_cleanup.add_argument("--write-report", action="store_true")
     eval_cleanup.add_argument("--report-dir", type=Path, default=DEFAULT_EVAL_REPORT_DIR)
     eval_cleanup.set_defaults(func=cmd_eval_cleanup_targets)
+    eval_export = eval_sub.add_parser("export-training", help="export non-eval harness traces as training examples")
+    add_json_flag(eval_export)
+    eval_export.add_argument("--eval-file", type=Path, default=DEFAULT_EVAL_FILE)
+    eval_export.add_argument("--catalog-db", type=Path, default=DEFAULT_DB)
+    eval_export.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
+    eval_export.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_TRAINING_EXPORT_DIR / "training_examples.jsonl",
+    )
+    eval_export.add_argument(
+        "--statuses",
+        default="pass,fail",
+        help="comma-separated harness run statuses to include",
+    )
+    eval_export.add_argument("--limit", type=int)
+    eval_export.set_defaults(func=cmd_eval_export_training)
 
     api = sub.add_parser("api", help="bounded JSON-RPC knowledge API helpers")
     add_json_flag(api)
@@ -432,7 +643,7 @@ def build_parser() -> argparse.ArgumentParser:
     harness_answer.add_argument("--harness-db", type=Path, default=DEFAULT_HARNESS_DB)
     harness_answer.add_argument(
         "--synthesis",
-        choices=["deterministic", "openai"],
+        choices=["deterministic", "local", "openai"],
         default="deterministic",
         help="synthesis adapter to use after retrieval",
     )
@@ -580,6 +791,131 @@ def cmd_source_shelves_bridge_bundle(args: argparse.Namespace) -> dict[str, Any]
         "valid": validation["valid"],
         "validation_errors": validation["errors"],
     }
+
+
+def cmd_flashcards_summary(args: argparse.Namespace) -> dict[str, Any]:
+    return flashcard_summary(args.db, profile=args.profile)
+
+
+def cmd_flashcards_show(args: argparse.Namespace) -> dict[str, Any]:
+    return flashcard_chain(args.db, args.book, profile=args.profile)
+
+
+def cmd_flashcards_write(args: argparse.Namespace) -> dict[str, Any]:
+    return write_flashcard_exports(args.db, output_dir=args.output_dir, profile=args.profile)
+
+
+def cmd_study_inventory(args: argparse.Namespace) -> dict[str, Any]:
+    return study_inventory(
+        args.db,
+        source_root=args.source_root,
+        shelf=args.shelf,
+        selection=args.selection,
+        book=args.book,
+    )
+
+
+def cmd_study_probe_source_root(args: argparse.Namespace) -> dict[str, Any]:
+    return probe_study_source_roots(
+        args.db,
+        paths=args.path,
+        shelf=args.shelf,
+        book=args.book,
+    )
+
+
+def cmd_study_build(args: argparse.Namespace) -> dict[str, Any]:
+    return build_study_materials(
+        args.db,
+        source_root=args.source_root,
+        output_dir=args.output_dir,
+        shelf=args.shelf,
+        selection=args.selection,
+        book=args.book,
+    )
+
+
+def cmd_study_show(args: argparse.Namespace) -> dict[str, Any]:
+    return study_view(
+        args.db,
+        args.book,
+        view=args.view,
+        output_dir=args.output_dir,
+        shelf=args.shelf,
+    )
+
+
+def cmd_study_export(args: argparse.Namespace) -> dict[str, Any]:
+    return export_study_materials(
+        args.db,
+        source_root=args.source_root,
+        output_dir=args.output_dir,
+        shelf=args.shelf,
+        target=args.target,
+        book=args.book,
+        export_all=args.all,
+    )
+
+
+def cmd_study_qa_summary(args: argparse.Namespace) -> dict[str, Any]:
+    return study_quality_summary(
+        args.db,
+        output_dir=args.output_dir,
+        qa_output_dir=args.qa_output_dir,
+        shelf=args.shelf,
+    )
+
+
+def cmd_study_qa_show(args: argparse.Namespace) -> dict[str, Any]:
+    return study_quality_show(
+        args.db,
+        args.book,
+        output_dir=args.output_dir,
+        shelf=args.shelf,
+    )
+
+
+def cmd_study_qa_write(args: argparse.Namespace) -> dict[str, Any]:
+    return write_study_quality_reports(
+        args.db,
+        output_dir=args.output_dir,
+        qa_output_dir=args.qa_output_dir,
+        shelf=args.shelf,
+    )
+
+
+def cmd_study_pages_summary(args: argparse.Namespace) -> dict[str, Any]:
+    return study_page_summary(
+        args.db,
+        source_root=args.source_root,
+        output_dir=args.output_dir,
+        wiki_root=args.wiki_root,
+        shelf=args.shelf,
+        selection=args.selection,
+    )
+
+
+def cmd_study_pages_show(args: argparse.Namespace) -> dict[str, Any]:
+    return study_page_show(
+        args.db,
+        args.book,
+        source_root=args.source_root,
+        output_dir=args.output_dir,
+        wiki_root=args.wiki_root,
+        shelf=args.shelf,
+        selection=args.selection,
+    )
+
+
+def cmd_study_pages_build(args: argparse.Namespace) -> dict[str, Any]:
+    return build_study_pages(
+        args.db,
+        source_root=args.source_root,
+        output_dir=args.output_dir,
+        wiki_root=args.wiki_root,
+        shelf=args.shelf,
+        selection=args.selection,
+    )
 
 
 def cmd_page_quality_summary(args: argparse.Namespace) -> dict[str, Any]:
@@ -827,6 +1163,9 @@ def cmd_eval_run(args: argparse.Namespace) -> dict[str, Any]:
         catalog_db=args.catalog_db,
         harness_db=args.harness_db,
         spec_dir=args.spec_dir,
+        split=args.split,
+        synthesis=args.synthesis,
+        llm_model=args.llm_model,
         limit=args.limit,
         write_report=args.write_report,
         report_dir=args.report_dir,
@@ -858,6 +1197,18 @@ def cmd_eval_cleanup_targets(args: argparse.Namespace) -> dict[str, Any]:
         target_limit=args.target_limit,
         write_report=args.write_report,
         report_dir=args.report_dir,
+    )
+
+
+def cmd_eval_export_training(args: argparse.Namespace) -> dict[str, Any]:
+    statuses = {item.strip() for item in args.statuses.split(",") if item.strip()}
+    return export_training_examples(
+        eval_file=args.eval_file,
+        catalog_db=args.catalog_db,
+        harness_db=args.harness_db,
+        output_path=args.output,
+        include_statuses=statuses or None,
+        limit=args.limit,
     )
 
 

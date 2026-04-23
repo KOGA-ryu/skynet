@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+target/
+cleanroom.db
+.cleanroom/
 
 # Generated local state. The NAS wiki remains external/canonical.
 state/*

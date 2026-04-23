@@ -17,9 +17,11 @@ from wiki_tool.ids import digest
 from wiki_tool.llm import (
     DEFAULT_OPENAI_MODEL,
     DeterministicSynthesisAdapter,
+    LocalStructuredSynthesisAdapter,
     OpenAIStructuredSynthesisAdapter,
     StructuredSynthesisAdapter,
     StructuredSynthesisError,
+    quote_from_text,
     synthesis_output_schema,
 )
 
@@ -31,6 +33,7 @@ REQUIRED_SPEC_KEYS = {"kind", "id", "version", "description"}
 SUPPORTED_SPEC_KINDS = {"failure_taxonomy", "reasoning_chain", "task_contract"}
 SUPPORTED_SCHEMA_TYPES = {"array", "boolean", "integer", "list", "number", "object", "string"}
 REQUIRED_FAILURE_CODES = {
+    "CLAIM_PLAN_INVALID",
     "GROUNDEDNESS_FAIL",
     "LLM_PROVIDER_CONFIG_MISSING",
     "LLM_SYNTHESIS_ERROR",
@@ -672,6 +675,9 @@ def run_answer_with_citations(
         synthesis_failure_actions: list[dict[str, Any]] = []
         schema_errors: list[str] = []
         schema_valid = False
+        claim_plan: dict[str, Any] | None = None
+        claim_plan_attempts: list[dict[str, Any]] = []
+        repair_errors: list[str] | None = None
         max_synthesis_attempts = 2
         attempt = 1
         while attempt <= max_synthesis_attempts:
@@ -682,19 +688,61 @@ def run_answer_with_citations(
                     chunks=chunks,
                     min_citations=min_citations(contract),
                     output_schema=synthesis_output_schema(),
+                    repair_errors=repair_errors,
                 )
-                outputs = synthesis_result.output
+                raw_output = synthesis_result.output
                 synthesis_metadata = {
                     **synthesis_result.metadata,
                     "duration_seconds": round(time.perf_counter() - synthesis_started, 3),
                     "mode": synthesis,
                 }
-                schema_errors = output_schema_errors(outputs, contract=contract, chain=chain)
-                schema_valid = not schema_errors
+                plan_errors: list[str] = []
+                plan_valid = True
+                valid_span_refs = True
+                if synthesis == "local":
+                    claim_plan = raw_output if isinstance(raw_output, dict) else {}
+                    plan_errors = claim_plan_errors(
+                        claim_plan,
+                        chunks,
+                        min_citations=min_citations(contract),
+                    )
+                    valid_span_refs = claim_plan_has_valid_span_refs(plan_errors)
+                    plan_valid = not plan_errors
+                    if plan_valid:
+                        outputs = render_claim_plan_outputs(
+                            claim_plan,
+                            chunks,
+                            user_query=user_query,
+                        )
+                    else:
+                        outputs = {}
+                    schema_errors = output_schema_errors(outputs, contract=contract, chain=chain) if plan_valid else []
+                else:
+                    outputs = raw_output
+                    schema_errors = output_schema_errors(outputs, contract=contract, chain=chain)
+                schema_valid = not schema_errors and plan_valid
+                failure_code = None
+                if not plan_valid:
+                    failure_code = "CLAIM_PLAN_INVALID"
+                    repair_errors = plan_errors
+                elif not schema_valid:
+                    failure_code = "OUTPUT_SCHEMA_INVALID"
+                    repair_errors = schema_errors
+                claim_plan_attempt = {
+                    "attempt": attempt,
+                    "claim_count": len(claim_plan.get("claims", [])) if isinstance(claim_plan, dict) else 0,
+                    "plan_errors": plan_errors,
+                    "plan_valid": plan_valid,
+                    "refusal": claim_plan.get("refusal") if isinstance(claim_plan, dict) else None,
+                    "valid_span_refs": valid_span_refs,
+                }
+                claim_plan_attempts.append(claim_plan_attempt)
                 synthesis_attempts.append(
                     {
+                        **claim_plan_attempt,
                         "attempt": attempt,
-                        "failure_code": None if schema_valid else "OUTPUT_SCHEMA_INVALID",
+                        "failure_code": failure_code,
+                        "provider": synthesis_metadata.get("provider"),
                         "schema_errors": schema_errors,
                         "schema_valid": schema_valid,
                         "status": "ok" if schema_valid else "failed",
@@ -704,39 +752,37 @@ def run_answer_with_citations(
                     break
                 if (
                     attempt < max_synthesis_attempts
-                    and "retry" in failure_response_actions(registry, "OUTPUT_SCHEMA_INVALID")
+                    and failure_code is not None
+                    and "retry" in failure_response_actions(registry, failure_code)
                 ):
                     synthesis_failure_actions.extend(
                         record_failure_actions(
                             failure_actions,
                             registry,
                             step_id="s3_synthesize",
-                            failure_code="OUTPUT_SCHEMA_INVALID",
+                            failure_code=failure_code,
                             status="applied",
-                            reason="Synthesis output failed schema validation; retrying once.",
+                            reason="Synthesis output failed validation; retrying once with repair feedback.",
                             attempt=attempt,
                             only_actions={"retry"},
                         )
                     )
                     attempt += 1
                     continue
-                failures.append(
-                    failure(
-                        "s3_synthesize",
-                        "OUTPUT_SCHEMA_INVALID",
-                        "critical",
-                        {"outputs": outputs, "schema_errors": schema_errors},
-                    )
-                )
-                if "abort" in failure_response_actions(registry, "OUTPUT_SCHEMA_INVALID"):
+                severity = "high" if failure_code == "CLAIM_PLAN_INVALID" else "critical"
+                details = {"outputs": outputs, "schema_errors": schema_errors}
+                if failure_code == "CLAIM_PLAN_INVALID":
+                    details = {"claim_plan": claim_plan or {}, "plan_errors": plan_errors}
+                failures.append(failure("s3_synthesize", str(failure_code), severity, details))
+                if failure_code is not None and "abort" in failure_response_actions(registry, failure_code):
                     synthesis_failure_actions.extend(
                         record_failure_actions(
                             failure_actions,
                             registry,
                             step_id="s3_synthesize",
-                            failure_code="OUTPUT_SCHEMA_INVALID",
+                            failure_code=failure_code,
                             status="applied",
-                            reason="Synthesis output remained schema-invalid after retry budget was exhausted.",
+                            reason="Synthesis output remained invalid after retry budget was exhausted.",
                             attempt=attempt,
                             only_actions={"abort"},
                         )
@@ -758,8 +804,12 @@ def run_answer_with_citations(
                     {
                         "attempt": attempt,
                         "failure_code": exc.failure_code,
+                        "plan_errors": [],
+                        "plan_valid": False,
+                        "provider": synthesis_metadata.get("provider"),
                         "schema_valid": False,
                         "status": "failed",
+                        "valid_span_refs": False,
                     }
                 )
                 response_actions = failure_response_actions(registry, exc.failure_code)
@@ -810,7 +860,13 @@ def run_answer_with_citations(
             },
             output={
                 **outputs,
+                "claim_plan": claim_plan or {},
+                "claim_plan_attempts": claim_plan_attempts,
                 "failure_actions": synthesis_failure_actions,
+                "first_pass_plan_valid": synthesis_attempts[0]["plan_valid"] if synthesis_attempts else False,
+                "first_pass_schema_valid": synthesis_attempts[0]["schema_valid"] if synthesis_attempts else False,
+                "first_pass_valid_span_refs": synthesis_attempts[0]["valid_span_refs"] if synthesis_attempts else False,
+                "repaired_success": len(synthesis_attempts) > 1 and schema_valid,
                 "schema_errors": schema_errors,
                 "schema_valid": schema_valid,
                 "synthesis_attempts": synthesis_attempts,
@@ -871,6 +927,7 @@ def run_answer_with_citations(
         raise
     finally:
         ended = utc_now()
+        first_attempt = synthesis_attempts[0] if synthesis_attempts else {}
         metrics = {
             "failure_action_count": len(failure_actions),
             "failure_count": len(failures),
@@ -878,9 +935,15 @@ def run_answer_with_citations(
             "retrieval_fallback_used": retrieval_fallback_used,
             "retrieval_hit_count": len(chunks),
             "retrieval_primary_hit_count": retrieval_primary_hit_count,
+            "synthesis_attempt_count": len(synthesis_attempts),
+            "synthesis_first_pass_failure_code": first_attempt.get("failure_code"),
+            "synthesis_first_pass_plan_valid": first_attempt.get("plan_valid"),
+            "synthesis_first_pass_schema_valid": first_attempt.get("schema_valid"),
+            "synthesis_first_pass_valid_span_refs": first_attempt.get("valid_span_refs"),
             "synthesis": synthesis,
             "synthesis_model": synthesis_metadata.get("model"),
             "synthesis_provider": synthesis_metadata.get("provider"),
+            "synthesis_repaired_success": len(synthesis_attempts) > 1 and schema_valid,
             "token_usage": synthesis_metadata.get("token_usage"),
             "wall_clock_seconds": elapsed_seconds(started, ended),
         }
@@ -907,6 +970,8 @@ def run_answer_with_citations(
 def synthesis_adapter_for(*, synthesis: str, model: str | None) -> StructuredSynthesisAdapter:
     if synthesis == "deterministic":
         return DeterministicSynthesisAdapter()
+    if synthesis == "local":
+        return LocalStructuredSynthesisAdapter()
     if synthesis == "openai":
         return OpenAIStructuredSynthesisAdapter(model=model or DEFAULT_OPENAI_MODEL)
     raise ValueError(f"unsupported synthesis mode: {synthesis}")
@@ -1826,6 +1891,114 @@ def groundedness_check(
         if normalize_quote(str(citation.get("quote", ""))) not in normalize_quote(chunk["text"]):
             errors.append(f"quote not found in chunk {citation.get('chunk_id')}")
     return {"errors": errors, "pass": not errors}
+
+
+def claim_plan_errors(
+    claim_plan: dict[str, Any],
+    chunks: list[dict[str, Any]],
+    *,
+    min_citations: int,
+) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(claim_plan, dict):
+        return ["claim plan must be an object"]
+    refusal = claim_plan.get("refusal")
+    refusal_reason = claim_plan.get("refusal_reason")
+    claims = claim_plan.get("claims")
+    if not isinstance(refusal, bool):
+        errors.append("refusal must be a boolean")
+    if not isinstance(refusal_reason, str):
+        errors.append("refusal_reason must be a string")
+    if not isinstance(claims, list):
+        return errors + ["claims must be an array"]
+
+    chunk_ids = {chunk["chunk_id"] for chunk in chunks}
+    claim_ids: set[str] = set()
+    unique_span_ids: set[str] = set()
+    for index, claim in enumerate(claims):
+        prefix = f"claims[{index}]"
+        if not isinstance(claim, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        claim_id = claim.get("claim_id")
+        text = claim.get("text")
+        span_ids = claim.get("span_ids")
+        if not isinstance(claim_id, str) or not claim_id.strip():
+            errors.append(f"{prefix}.claim_id must be a non-empty string")
+        elif claim_id in claim_ids:
+            errors.append(f"duplicate claim_id {claim_id}")
+        else:
+            claim_ids.add(claim_id)
+        if not isinstance(text, str) or not text.strip():
+            errors.append(f"{prefix}.text must be a non-empty string")
+        elif "\n" in text or text.lstrip().startswith(("-", "*", "#")):
+            errors.append(f"{prefix}.text must be a single atomic claim")
+        if not isinstance(span_ids, list) or not span_ids:
+            errors.append(f"{prefix}.span_ids must be a non-empty array")
+            continue
+        for span_index, span_id in enumerate(span_ids):
+            if not isinstance(span_id, str) or not span_id.strip():
+                errors.append(f"{prefix}.span_ids[{span_index}] must be a non-empty string")
+                continue
+            if span_id not in chunk_ids:
+                errors.append(f"unknown span_id {span_id}")
+                continue
+            unique_span_ids.add(span_id)
+
+    if refusal is True:
+        if claims:
+            errors.append("claims must be empty when refusal is true")
+        if not isinstance(refusal_reason, str) or not refusal_reason.strip():
+            errors.append("refusal_reason must be non-empty when refusal is true")
+    elif refusal is False:
+        if not claims:
+            errors.append("claims must be non-empty when refusal is false")
+        if isinstance(refusal_reason, str) and refusal_reason.strip():
+            errors.append("refusal_reason must be empty when refusal is false")
+        if len(unique_span_ids) < min_citations:
+            errors.append(f"expected at least {min_citations} unique supporting spans")
+    return errors
+
+
+def claim_plan_has_valid_span_refs(errors: list[str]) -> bool:
+    return not any("span_id" in error or "supporting spans" in error for error in errors)
+
+
+def render_claim_plan_outputs(
+    claim_plan: dict[str, Any],
+    chunks: list[dict[str, Any]],
+    *,
+    user_query: str,
+) -> dict[str, Any]:
+    if claim_plan.get("refusal") is True:
+        reason = str(claim_plan.get("refusal_reason", "")).strip()
+        answer = f"Insufficient grounded wiki evidence was found for `{user_query}`."
+        if reason:
+            answer = f"{answer}\n\n{reason}"
+        return {"answer_markdown": answer, "citations": []}
+
+    chunk_by_id = {chunk["chunk_id"]: chunk for chunk in chunks}
+    claims = [claim for claim in claim_plan.get("claims", []) if isinstance(claim, dict)]
+    answer_lines = [str(claim["text"]).strip() for claim in claims if str(claim.get("text", "")).strip()]
+    citations: list[dict[str, Any]] = []
+    seen_span_ids: set[str] = set()
+    for claim in claims:
+        claim_text = str(claim.get("text", "")).strip()
+        for span_id in claim.get("span_ids", []):
+            if span_id in seen_span_ids:
+                continue
+            seen_span_ids.add(span_id)
+            chunk = chunk_by_id[span_id]
+            citations.append(
+                {
+                    "artifact_id": chunk["artifact_id"],
+                    "chunk_id": chunk["chunk_id"],
+                    "quote": quote_from_text(chunk["text"]),
+                    "relevance_note": f"Supports claim: {claim_text}",
+                }
+            )
+    answer = "\n".join(f"- {line}" for line in answer_lines) if len(answer_lines) > 1 else "".join(answer_lines)
+    return {"answer_markdown": answer, "citations": citations}
 
 
 def build_search_queries(user_query: str) -> list[str]:

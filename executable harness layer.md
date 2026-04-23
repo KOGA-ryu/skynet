@@ -171,7 +171,7 @@ kind: reasoning_chain
 id: chain.rag_answer
 version: 1
 description: >
-  Plan, retrieve with hybrid search, synthesize an answer, verify groundedness, then persist.
+  Plan, retrieve supporting spans, synthesize a claim plan, render citations deterministically, verify groundedness, then persist.
 steps:
   - id: s1_plan
     type: llm
@@ -205,10 +205,11 @@ steps:
       context_chunks: "{{steps.s2_retrieve.retrieved_chunks}}"
     output_schema:
       type: object
-      required_keys: [answer_markdown, citations]
+      required_keys: [refusal, refusal_reason, claims]
     prompt_template: |
-      Answer using ONLY the provided context chunks.
-      If context is insufficient, say what is missing and ask for the minimum needed detail.
+      Produce a claim plan using ONLY the provided context chunks.
+      Do not write final prose or final citations.
+      If context is insufficient, refuse.
 
       User query: {{user_query}}
 
@@ -216,18 +217,29 @@ steps:
       {{context_chunks}}
 
       Output:
-      - answer_markdown: markdown string
-      - citations: array of objects:
-          {chunk_id, artifact_id, quote (<=20 words), relevance_note}
-  - id: s4_verify_groundedness
+      - refusal: boolean
+      - refusal_reason: string
+      - claims: array of objects:
+          {claim_id, text, span_ids}
+      Rules:
+      - one claim must map to one supportable fact
+      - avoid conjunctions unless every part is directly supported by the cited spans
+      - avoid interpretive language unless the cited spans explicitly support it
+  - id: s4_render_outputs
+    type: tool
+    tool_name: renderer.build_answer_and_citations
+    tool_args_template:
+      claim_plan: "{{steps.s3_synthesize}}"
+      retrieved_chunks: "{{steps.s2_retrieve.retrieved_chunks}}"
+  - id: s5_verify_groundedness
     type: tool
     tool_name: verifier.groundedness_check
     tool_args_template:
-      answer_markdown: "{{steps.s3_synthesize.answer_markdown}}"
-      citations: "{{steps.s3_synthesize.citations}}"
+      answer_markdown: "{{steps.s4_render_outputs.answer_markdown}}"
+      citations: "{{steps.s4_render_outputs.citations}}"
       retrieved_chunks: "{{steps.s2_retrieve.retrieved_chunks}}"
       policy: "strict_quote_match_or_semantic_entailment"
-  - id: s5_persist
+  - id: s6_persist
     type: tool
     tool_name: store.persist_run
     tool_args_template:
@@ -235,8 +247,8 @@ steps:
       inputs:
         user_query: "{{user_query}}"
       outputs:
-        answer_markdown: "{{steps.s3_synthesize.answer_markdown}}"
-        citations: "{{steps.s3_synthesize.citations}}"
+        answer_markdown: "{{steps.s4_render_outputs.answer_markdown}}"
+        citations: "{{steps.s4_render_outputs.citations}}"
       trace:
         steps: "{{steps}}"
 ```
@@ -623,6 +635,19 @@ Verification is two things: schema correctness (structural) and groundedness (se
 
 Structural: enforce JSON Schema for model outputs and tool arguments wherever possible. This is supported by “structured outputs” in LLM APIs, enabling you to reject malformed outputs deterministically. citeturn5search0turn5search4turn4search1
 
+For a local claim-plan path, structural validation should happen before final
+answer rendering. The model should choose support, not author final quotes.
+That means validating `refusal`, `refusal_reason`, and atomic claim objects
+that reference retrieved span IDs, then rendering final citations
+deterministically from the validated spans.
+
+Be explicit about what “atomic claim” means. One claim should map to one
+supportable fact. Conjunctions are invalid unless every clause is backed by the
+same selected spans. Interpretive or connective language is invalid unless the
+evidence explicitly supports it. This does not abolish hallucination risk,
+because claim text is still model-authored, but it sharply narrows where that
+risk can enter the system.
+
 Semantic groundedness: apply a layered approach:
 
 Deterministic checks first: every citation must point to a retrieved chunk; quoted spans must exist (exact or fuzzy match) in chunk text; minimum citations enforced. These checks turn “GROUNDEDNESS_FAIL” from subjective to measurable.
@@ -630,6 +655,17 @@ Deterministic checks first: every citation must point to a retrieved chunk; quot
 LLM-judge checks second, and logged as “advisory”: LLM-as-a-judge research shows it can approximate human preference at scale but has biases; this argues for using it as one signal, not the only gate. citeturn6search2turn6search14
 
 Iterative repair loop when failing: approaches like Self-Refine show iterative feedback/refinement can improve outputs. In harness terms, this becomes a controlled retry with a specific failure code and a modified prompt/template, not a free-form “try again.” citeturn6search1turn6search5
+
+Keep the repair loop on a leash. One repair pass for schema errors or invalid
+span references is reasonable; beyond that you are hiding instability rather
+than fixing it. First-pass validity and repaired validity should be reported as
+separate metrics and must not be blended into a single success number.
+
+This stricter contract will often make retrieval weaknesses more visible. A
+refusal-heavy system after the change is not necessarily worse; it may simply
+be telling the truth about retrieval coverage and refusal thresholds. Document
+that distinction clearly so people do not confuse safer failure behavior with a
+quality regression.
 
 For high-stakes tasks, consider limited self-consistency sampling as a verification tool: generate multiple candidate answers and select the most consistent one, which improves accuracy in reasoning settings but increases cost. citeturn6search0turn6search12
 
@@ -745,4 +781,6 @@ Milestone six: Optional durable workflow orchestration + full telemetry export, 
 7. Persist retrieval candidates (top-k list with scores and filters) for every retrieval step; without this, you can’t debug RAG failures. citeturn2search2turn4search2
 8. Stand up basic telemetry: emit a trace/span per step and counters for failure codes. Even minimal OpenTelemetry usage makes debugging dramatically easier. citeturn3search0turn3search12
 9. Build a 30-example eval set now (not later): run nightly and track contract compliance + groundedness failure rate; use OpenAI eval tooling or your own harness runner, but make it automated. citeturn5search3turn5search7turn2search2
-10. Only after the above is stable: introduce child-task spawning (budgeted) for multi-doc synthesis and ingestion at scale, using explicit planning patterns (Plan-and-Solve) rather than ad-hoc branching. citeturn2search1turn0search3
+10. Put a hard wall between training export and evaluation data. Dev and holdout
+    eval queries are not training examples; training export must exclude them.
+11. Only after the above is stable: introduce child-task spawning (budgeted) for multi-doc synthesis and ingestion at scale, using explicit planning patterns (Plan-and-Solve) rather than ad-hoc branching. citeturn2search1turn0search3

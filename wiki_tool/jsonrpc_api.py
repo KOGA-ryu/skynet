@@ -74,7 +74,7 @@ METHODS: dict[str, dict[str, Any]] = {
         "description": "Run the answer-with-citations harness and return a bounded answer summary.",
         "params": {
             "query": "string",
-            "synthesis": "string optional; deterministic or openai",
+            "synthesis": "string optional; deterministic, local, or openai",
             "limit": "integer optional",
         },
         "default_limit": HARNESS_DEFAULT_LIMIT,
@@ -369,8 +369,8 @@ def optional_synthesis(params: dict[str, Any]) -> str:
     if not isinstance(value, str):
         raise JsonRpcException(INVALID_PARAMS, "Invalid params: synthesis must be a string")
     value = value.strip()
-    if value not in {"deterministic", "openai"}:
-        raise JsonRpcException(INVALID_PARAMS, "Invalid params: synthesis must be deterministic or openai")
+    if value not in {"deterministic", "local", "openai"}:
+        raise JsonRpcException(INVALID_PARAMS, "Invalid params: synthesis must be deterministic, local, or openai")
     return value
 
 

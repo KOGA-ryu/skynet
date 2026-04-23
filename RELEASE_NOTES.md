@@ -51,6 +51,12 @@ APIs.
 - The executable harness can answer wiki questions with citations, persist run
   traces, validate task specs, map failures to actions, retry bounded retrieval
   fallbacks, and diff runs.
+- The local harness path now uses a claim-plan-first contract. The model picks
+  atomic claims plus supporting span IDs, and the harness renders final
+  citations and quote text deterministically from retrieved spans.
+- This is a systems-integrity improvement first, not a declaration that local
+  answer quality is solved. The safer failure mode is refusal when retrieval is
+  thin or policy thresholds are strict.
 - Retrieval profile comparison can score eval-only candidates against the
   current span FTS baseline without changing production search behavior.
 - Eval cleanup targets turn retrieval misses and low-ranked expected paths into
@@ -73,6 +79,9 @@ APIs.
   catalogs are for local read/build work.
 - OpenAI-backed harness synthesis is opt-in. Deterministic synthesis is the
   default for routine verification.
+- Local synthesis is also opt-in. It guarantees deterministic citation
+  rendering from retrieved spans, but answer usefulness still depends on
+  retrieval quality, claim-plan quality, and refusal thresholds.
 
 ## Known Good Commands
 
@@ -98,10 +107,19 @@ python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic
 python3 -m wiki_tool harness show <run_id> --json
 ```
 
+Run a local claim-plan harness answer and inspect the run:
+
+```bash
+python3 -m wiki_tool harness answer "adapter boundary" --synthesis local --json
+python3 -m wiki_tool harness show <run_id> --json
+```
+
 Run the eval suite:
 
 ```bash
 python3 -m wiki_tool eval run --json
+python3 -m wiki_tool eval run --split holdout --synthesis local --json
+python3 -m wiki_tool eval export-training --output state/training_exports/training_examples.jsonl --json
 python3 -m wiki_tool eval compare-profiles --json
 python3 -m wiki_tool eval cleanup-targets --json
 ```

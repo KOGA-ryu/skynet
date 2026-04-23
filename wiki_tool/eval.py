@@ -23,6 +23,7 @@ from wiki_tool.page_quality import build_page_quality_report, word_count
 
 DEFAULT_EVAL_FILE = Path("eval/wiki_queries_v1.jsonl")
 DEFAULT_EVAL_REPORT_DIR = Path("state/eval_reports")
+DEFAULT_TRAINING_EXPORT_DIR = Path("state/training_exports")
 DEFAULT_BASELINE_RETRIEVAL_PROFILE = "catalog.fts_spans.primary"
 DEFAULT_CLEANUP_COMPARISON_PROFILE = "catalog.fts_spans.expanded"
 DEFAULT_CLEANUP_TARGET_LIMIT = 50
@@ -33,9 +34,11 @@ DEFAULT_RETRIEVAL_PROFILES = [
     "catalog.hybrid.spans_documents",
 ]
 REQUIRED_EVAL_KEYS = {"category", "expected_hints", "expected_paths", "min_citations", "query"}
+ALLOWED_EVAL_SPLITS = {"dev", "holdout", "train"}
+ALLOWED_EXPECTED_OUTCOMES = {"answer", "refuse"}
 
 
-def load_eval_cases(path: Path = DEFAULT_EVAL_FILE) -> list[dict[str, Any]]:
+def load_eval_cases(path: Path = DEFAULT_EVAL_FILE, *, split: str | None = None) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
     for line_number, line in enumerate(path.read_text().splitlines(), start=1):
         if not line.strip():
@@ -48,6 +51,8 @@ def load_eval_cases(path: Path = DEFAULT_EVAL_FILE) -> list[dict[str, Any]]:
         if missing:
             raise ValueError(f"{path}:{line_number}: missing keys: {sorted(missing)}")
         validate_eval_case(path, line_number, case)
+        if split is not None and eval_case_split(case) != split:
+            continue
         cases.append(case)
     return cases
 
@@ -69,6 +74,33 @@ def validate_eval_case(path: Path, line_number: int, case: dict[str, Any]) -> No
     for item in case["expected_hints"]:
         if not isinstance(item, str) or not item.strip():
             raise ValueError(f"{path}:{line_number}: expected hints must be non-empty strings")
+    if "split" in case:
+        split = case["split"]
+        if not isinstance(split, str) or split not in ALLOWED_EVAL_SPLITS:
+            raise ValueError(f"{path}:{line_number}: split must be one of {sorted(ALLOWED_EVAL_SPLITS)}")
+    if "bucket" in case and (not isinstance(case["bucket"], str) or not case["bucket"].strip()):
+        raise ValueError(f"{path}:{line_number}: bucket must be a non-empty string when provided")
+    if "expected_outcome" in case:
+        expected_outcome = case["expected_outcome"]
+        if (
+            not isinstance(expected_outcome, str)
+            or expected_outcome not in ALLOWED_EXPECTED_OUTCOMES
+        ):
+            raise ValueError(
+                f"{path}:{line_number}: expected_outcome must be one of {sorted(ALLOWED_EXPECTED_OUTCOMES)}"
+            )
+    if "gold_claim_units" in case:
+        claim_units = case["gold_claim_units"]
+        if not isinstance(claim_units, list):
+            raise ValueError(f"{path}:{line_number}: gold_claim_units must be an array when provided")
+        for item in claim_units:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"{path}:{line_number}: gold_claim_units entries must be non-empty strings")
+
+
+def eval_case_split(case: dict[str, Any]) -> str:
+    value = case.get("split")
+    return str(value) if isinstance(value, str) and value in ALLOWED_EVAL_SPLITS else "holdout"
 
 
 def run_eval(
@@ -77,11 +109,14 @@ def run_eval(
     catalog_db: Path = DEFAULT_DB,
     harness_db: Path = DEFAULT_HARNESS_DB,
     spec_dir: Path = DEFAULT_SPEC_DIR,
+    split: str | None = None,
+    synthesis: str = "deterministic",
+    llm_model: str | None = None,
     limit: int | None = None,
     write_report: bool = False,
     report_dir: Path = DEFAULT_EVAL_REPORT_DIR,
 ) -> dict[str, Any]:
-    cases = load_eval_cases(eval_file)
+    cases = load_eval_cases(eval_file, split=split)
     if limit is not None:
         cases = cases[:limit]
 
@@ -92,6 +127,8 @@ def run_eval(
             catalog_db=catalog_db,
             harness_db=harness_db,
             spec_dir=spec_dir,
+            synthesis=synthesis,
+            llm_model=llm_model,
         )
         for case in cases
     ]
@@ -105,9 +142,11 @@ def run_eval(
         "eval_file": str(eval_file),
         "harness_db": str(harness_db),
         "results": results,
+        "split": split,
         "started_at_utc": started_at,
         "status": "pass" if query_status == "pass" and broken_link_regression["status"] == "pass" else "fail",
         "summary": summary,
+        "synthesis": synthesis,
     }
     if write_report:
         report_path = write_eval_report(payload, report_dir=report_dir)
@@ -748,15 +787,19 @@ def score_case(
     catalog_db: Path,
     harness_db: Path,
     spec_dir: Path,
+    synthesis: str,
+    llm_model: str | None,
 ) -> dict[str, Any]:
     harness_result = run_answer_with_citations(
         str(case["query"]),
         catalog_db=catalog_db,
         harness_db=harness_db,
         spec_dir=spec_dir,
-        synthesis="deterministic",
+        synthesis=synthesis,
+        llm_model=llm_model,
     )
     trace = get_harness_run(harness_result["run_id"], harness_db)
+    synth_step = next((step for step in trace["steps"] if step["step_id"] == "s3_synthesize"), {"output": {}})
     retrieved_paths = unique_strings(candidate["path"] for candidate in trace["retrieval_candidates"])
     citations = harness_result.get("citations", [])
     citation_paths = unique_strings(str(citation.get("artifact_id", "")) for citation in citations)
@@ -773,12 +816,26 @@ def score_case(
     citation_path_hit = bool(matched_citation_paths)
     matched_hints = [hint for hint in expected_hints if hint.lower() in evidence_text]
     hint_hit = bool(matched_hints)
+    claim_plan = synth_step.get("output", {}).get("claim_plan", {})
+    predicted_claims = [
+        str(item.get("text", "")).strip()
+        for item in claim_plan.get("claims", [])
+        if isinstance(item, dict) and str(item.get("text", "")).strip()
+    ]
+    gold_claim_units = [str(item).strip() for item in case.get("gold_claim_units", []) if str(item).strip()]
+    claim_support_precision = score_claim_support_precision(predicted_claims, gold_claim_units)
+    refusal_expected = case.get("expected_outcome") == "refuse"
+    refusal_actual = bool(claim_plan.get("refusal")) if isinstance(claim_plan, dict) else False
 
     failure_reasons: list[str] = []
     if not retrieval_hit:
         failure_reasons.append("retrieval_miss")
     if not citation_count_ok:
         failure_reasons.append("citation_count")
+    if refusal_expected != refusal_actual:
+        failure_reasons.append("refusal_mismatch")
+    if claim_support_precision is not None and claim_support_precision < 1.0:
+        failure_reasons.append("claim_precision")
     warnings: list[str] = []
     if not citation_path_hit:
         warnings.append("citation_path_miss")
@@ -787,23 +844,30 @@ def score_case(
 
     return {
         "category": case["category"],
+        "bucket": str(case.get("bucket") or case["category"]),
         "citation_count": citation_count,
         "citation_count_ok": citation_count_ok,
         "citation_path_hit": citation_path_hit,
         "citation_paths": citation_paths,
+        "claim_support_precision": claim_support_precision,
+        "expected_outcome": case.get("expected_outcome", "answer"),
         "expected_path_recall": round(expected_path_recall, 4),
         "expected_paths": expected_paths,
         "failure_reasons": failure_reasons,
+        "gold_claim_units": gold_claim_units,
         "hint_hit": hint_hit,
         "matched_citation_paths": matched_citation_paths,
         "matched_expected_paths": matched_expected_paths,
         "matched_hints": matched_hints,
         "min_citations": case["min_citations"],
+        "predicted_claims": predicted_claims,
         "query": case["query"],
+        "refusal_actual": refusal_actual,
         "retrieval_hit": retrieval_hit,
         "retrieved_paths": retrieved_paths,
         "run_id": harness_result["run_id"],
-        "status": "pass" if retrieval_hit and citation_count_ok else "fail",
+        "split": eval_case_split(case),
+        "status": "pass" if not failure_reasons else "fail",
         "warnings": warnings,
     }
 
@@ -822,6 +886,22 @@ def score_broken_link_regression(catalog_db: Path) -> dict[str, Any]:
     }
 
 
+def score_claim_support_precision(
+    predicted_claims: list[str],
+    gold_claim_units: list[str],
+) -> float | None:
+    if not gold_claim_units or not predicted_claims:
+        return None
+    gold = {normalize_claim_unit(item) for item in gold_claim_units}
+    predicted = [normalize_claim_unit(item) for item in predicted_claims]
+    supported = sum(1 for item in predicted if item in gold)
+    return round(supported / len(predicted), 4)
+
+
+def normalize_claim_unit(value: str) -> str:
+    return " ".join(value.lower().split())
+
+
 def summarize_results(
     results: list[dict[str, Any]],
     *,
@@ -833,7 +913,17 @@ def summarize_results(
     citation_count_passes = sum(1 for item in results if item["citation_count_ok"])
     citation_path_hits = sum(1 for item in results if item["citation_path_hit"])
     hint_hits = sum(1 for item in results if item["hint_hit"])
+    refusal_correct = sum(
+        1
+        for item in results
+        if bool(item.get("refusal_actual")) == (item.get("expected_outcome") == "refuse")
+    )
     recall_sum = sum(float(item["expected_path_recall"]) for item in results)
+    claim_precision_values = [
+        float(item["claim_support_precision"])
+        for item in results
+        if item.get("claim_support_precision") is not None
+    ]
     by_category: dict[str, dict[str, Any]] = {}
     for category, items in group_by_category(results).items():
         count = len(items)
@@ -853,6 +943,10 @@ def summarize_results(
         "citation_count_pass_rate": ratio(citation_count_passes, total),
         "citation_path_hit_count": citation_path_hits,
         "citation_path_hit_rate": ratio(citation_path_hits, total),
+        "claim_support_precision_avg": round(sum(claim_precision_values) / len(claim_precision_values), 4)
+        if claim_precision_values
+        else None,
+        "claim_support_precision_case_count": len(claim_precision_values),
         "failure_counts": dict(sorted(failure_counts.items())),
         "hint_hit_count": hint_hits,
         "hint_hit_rate": ratio(hint_hits, total),
@@ -860,10 +954,109 @@ def summarize_results(
         "pass_rate": ratio(pass_count, total),
         "query_pass_count": pass_count,
         "query_pass_rate": ratio(pass_count, total),
+        "refusal_correct_count": refusal_correct,
+        "refusal_correct_rate": ratio(refusal_correct, total),
         "retrieval_hit_count": retrieval_hits,
         "retrieval_hit_rate": ratio(retrieval_hits, total),
         "total_cases": total,
     }
+
+
+def export_training_examples(
+    *,
+    harness_db: Path = DEFAULT_HARNESS_DB,
+    catalog_db: Path = DEFAULT_DB,
+    eval_file: Path = DEFAULT_EVAL_FILE,
+    output_path: Path,
+    include_statuses: set[str] | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    excluded_queries = {str(case["query"]).strip() for case in load_eval_cases(eval_file)}
+    traces = list_harness_traces(harness_db, limit=limit)
+    examples: list[dict[str, Any]] = []
+    excluded_eval_count = 0
+    for trace in traces:
+        query = str(trace["inputs"].get("user_query", "")).strip()
+        if not query:
+            continue
+        if query in excluded_queries:
+            excluded_eval_count += 1
+            continue
+        if include_statuses is not None and trace["status"] not in include_statuses:
+            continue
+        retrieval_span_ids = [item["chunk_id"] for item in trace["retrieval_candidates"]]
+        examples.append(
+            {
+                "query": query,
+                "retrieved_spans": fetch_spans_by_id(catalog_db, retrieval_span_ids),
+                "run_id": trace["run_id"],
+                "status": trace["status"],
+                "gold_answer_markdown": trace["outputs"].get("answer_markdown", ""),
+                "gold_citations": trace["outputs"].get("citations", []),
+                "gold_claim_plan": trace["steps_by_id"].get("s3_synthesize", {}).get("output", {}).get("claim_plan", {}),
+                "failures": trace["failures"],
+            }
+        )
+    lines = [json.dumps(example, sort_keys=True) for example in examples]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(("\n".join(lines) + "\n") if lines else "")
+    return {
+        "eval_file": str(eval_file),
+        "excluded_eval_query_count": excluded_eval_count,
+        "exported_example_count": len(examples),
+        "harness_db": str(harness_db),
+        "output_path": str(output_path),
+        "status_filter": sorted(include_statuses) if include_statuses is not None else None,
+    }
+
+
+def list_harness_traces(harness_db: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
+    with closing(sqlite3.connect(harness_db)) as con:
+        con.row_factory = sqlite3.Row
+        sql = """
+            SELECT run_id, status, inputs_json, outputs_json
+            FROM harness_runs
+            ORDER BY started_at_utc DESC
+        """
+        params: tuple[Any, ...] = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        rows = con.execute(sql, params).fetchall()
+    traces = []
+    for row in rows:
+        trace = get_harness_run(row["run_id"], harness_db)
+        traces.append(
+            {
+                "failures": trace["failures"],
+                "inputs": trace["run"]["inputs"],
+                "outputs": trace["run"]["outputs"],
+                "retrieval_candidates": trace["retrieval_candidates"],
+                "run_id": row["run_id"],
+                "status": row["status"],
+                "steps_by_id": {step["step_id"]: step for step in trace["steps"]},
+            }
+        )
+    return traces
+
+
+def fetch_spans_by_id(catalog_db: Path, span_ids: list[str]) -> list[dict[str, Any]]:
+    if not span_ids:
+        return []
+    ordered_ids = unique_strings(span_ids)
+    placeholders = ",".join("?" for _ in ordered_ids)
+    with closing(sqlite3.connect(catalog_db)) as con:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            f"""
+            SELECT span_id, path, heading, start_line, end_line, text
+            FROM spans
+            WHERE span_id IN ({placeholders})
+            """,
+            tuple(ordered_ids),
+        ).fetchall()
+    row_by_id = {row["span_id"]: dict(row) for row in rows}
+    return [row_by_id[span_id] for span_id in ordered_ids if span_id in row_by_id]
 
 
 def write_eval_report(payload: dict[str, Any], *, report_dir: Path = DEFAULT_EVAL_REPORT_DIR) -> Path:
@@ -907,6 +1100,8 @@ def render_eval_report(payload: dict[str, Any]) -> str:
         f"- started: `{payload['started_at_utc']}`",
         f"- ended: `{payload['ended_at_utc']}`",
         f"- eval file: `{payload['eval_file']}`",
+        f"- split: `{payload.get('split') or 'all'}`",
+        f"- synthesis: `{payload.get('synthesis', 'deterministic')}`",
         f"- status: `{payload['status']}`",
         "",
         "## Summary",
@@ -917,6 +1112,8 @@ def render_eval_report(payload: dict[str, Any]) -> str:
         f"- average expected-path recall: {summary['average_expected_path_recall']}",
         f"- citation count pass rate: {summary['citation_count_pass_rate']}",
         f"- citation path hit rate: {summary['citation_path_hit_rate']}",
+        f"- refusal correctness: {summary['refusal_correct_rate']}",
+        f"- claim support precision avg: {summary['claim_support_precision_avg']}",
         f"- hint hit rate: {summary['hint_hit_rate']}",
         "",
         "## Broken Link Regression",

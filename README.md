@@ -1,8 +1,24 @@
-# Wiki Usability Tooling
+# Skynet Cleanroom
 
-This repo is the local build/tooling layer for the private NAS wiki. The NAS
-Markdown tree remains the canonical editorial source; this repo builds derived
-navigation, audit, and patch-bundle artifacts around it.
+This repo is a review-gated cleanroom that turns messy source material into
+traceable knowledge nodes through a dense operator shell.
+
+The current codebase has two layers:
+
+1. The Rust cleanroom core under `src/`, which owns staged packet processing,
+   persistence, replay, and bounded cloud integration.
+2. The legacy Python wiki tooling under `wiki_tool/`, which remains useful
+   local infrastructure but is no longer the project identity.
+
+Canonical project docs:
+
+- [ROADMAP.md](ROADMAP.md)
+- [ROADMAP_TASKLIST.md](ROADMAP_TASKLIST.md)
+- [docs/DOCTRINE.md](docs/DOCTRINE.md)
+- [docs/REVIEW_GATE_CONTRACT.md](docs/REVIEW_GATE_CONTRACT.md)
+- [docs/UI_SHELL_CONTRACT.md](docs/UI_SHELL_CONTRACT.md)
+- [docs/DECISIONS.md](docs/DECISIONS.md)
+- [docs/RISK_REGISTER.md](docs/RISK_REGISTER.md)
 
 Defaults:
 
@@ -74,6 +90,26 @@ python3 -m wiki_tool source-shelves write --output-dir state/source_shelf_report
 python3 -m wiki_tool source-shelves cleanup-bundle computer --output patch_bundles/source_shelves_computer_cleanup.json --json
 python3 -m wiki_tool source-shelves bridge-bundle math --output patch_bundles/source_shelves_math_bridge_map.json --json
 python3 -m wiki_tool source-shelves bridge-bundle computer --output patch_bundles/source_shelves_computer_project_bridge_map.json --json
+python3 -m wiki_tool flashcards summary --profile both --json
+python3 -m wiki_tool flashcards show probability_measure --profile expanded --json
+python3 -m wiki_tool flashcards write --profile both --output-dir state/flashcards --json
+python3 -m wiki_tool study probe-source-root --path /candidate/math_extracts --path /another/candidate --json
+python3 -m wiki_tool study inventory --json
+python3 -m wiki_tool study inventory --selection maintained_only --json
+python3 -m wiki_tool study inventory --book probability_measure --json
+python3 -m wiki_tool study build --output-dir state/study_materials --json
+python3 -m wiki_tool study build --selection maintained_only --output-dir state/study_materials --json
+python3 -m wiki_tool study build --book probability_measure --output-dir state/study_materials --json
+python3 -m wiki_tool study show probability_measure --view reader --output-dir state/study_materials --json
+python3 -m wiki_tool study show probability_measure --view cards --output-dir state/study_materials --json
+python3 -m wiki_tool study export --book probability_measure --target canonical --output-dir state/study_materials --json
+python3 -m wiki_tool study export --book probability_measure --target discoflash --output-dir state/study_materials --json
+python3 -m wiki_tool study qa summary --json
+python3 -m wiki_tool study qa show probability_measure --json
+python3 -m wiki_tool study qa write --json
+python3 -m wiki_tool study pages summary --json
+python3 -m wiki_tool study pages show probability_measure --json
+python3 -m wiki_tool study pages build --json
 python3 -m wiki_tool page-quality summary --json
 python3 -m wiki_tool page-quality thin --json
 python3 -m wiki_tool page-quality missing-summaries --json
@@ -103,11 +139,14 @@ python3 -m wiki_tool aliases list --json
 python3 -m wiki_tool aliases list --catalog --json
 python3 -m wiki_tool harness validate --json
 python3 -m wiki_tool harness answer "adapter boundary" --synthesis deterministic --json
+python3 -m wiki_tool harness answer "adapter boundary" --synthesis local --json
 python3 -m wiki_tool harness answer "adapter boundary" --synthesis openai --llm-model gpt-5.4-mini --json
 python3 -m wiki_tool harness runs --json
 python3 -m wiki_tool harness show <run_id> --json
 python3 -m wiki_tool eval run --json
+python3 -m wiki_tool eval run --split holdout --synthesis local --json
 python3 -m wiki_tool eval run --write-report --json
+python3 -m wiki_tool eval export-training --output state/training_exports/training_examples.jsonl --json
 python3 -m wiki_tool eval compare-profiles --json
 python3 -m wiki_tool eval compare-profiles --write-report --json
 python3 -m wiki_tool eval cleanup-targets --json
@@ -176,6 +215,179 @@ Source shelf reports:
   refreshes the computer shelf hub from the current catalog. Apply it to
   `state/wiki_mirror` first; NAS promotion is a separate reviewed bundle pass.
 
+Flashcard exports:
+
+- `flashcards` derives local-only math flashcard chains from maintained
+  `sources/math` book notes and concept pages in the catalog.
+- `flashcards` supports `strict` and `expanded` profiles. `strict` preserves the
+  conservative concept-page export; `expanded` adds grounded study-anchor cards
+  from `Strongest Chapters` and thin-book question fallbacks.
+- `flashcards write` emits profile-specific JSONL exports plus review artifacts
+  under ignored `state/flashcards/`; it does not edit the NAS or
+  `state/wiki_mirror`.
+- Flashcard freshness is scoped to `sources/math` and `concepts/`, so unrelated
+  mirror drift elsewhere does not block generation.
+- Inferred concept associations stay deterministic and grounded; unresolved
+  definitions are routed to the local review queue instead of being invented.
+
+Study materials:
+
+- NAS migration checklist for study data and local app state:
+  [NAS_STUDY_MIGRATION_CHECKLIST.md](NAS_STUDY_MIGRATION_CHECKLIST.md)
+- `study` builds front-to-back per-book artifacts from the local extract corpus
+  under `state/local_corpus/ml-letsgo/outputs/math` and writes outputs under
+  ignored `state/study_materials/math/`.
+- Source notes under `sources/math` are optional enrichment, not a requirement.
+  Books with matching notes keep `note_path` metadata and can merge in strict
+  concept-card enrichment; books without notes still build from extract
+  manifests alone.
+- `study probe-source-root` is the read-only first step when the real extract
+  root is unclear. It scores one or more candidate paths against the maintained
+  math shelf and ranks them as `good_candidate`, `partial_candidate`, or
+  `no_match`.
+- The expected extract layout is one directory per `document_id` with:
+  - `manifests/book.json`
+  - `manifests/ch_*.json`
+  - `chapter_json/ch_*/chapter.json` or legacy `ch_*/chapter.json`
+  - `normalized_markdown/ch_*/chapter.md`
+- `study probe-source-root` reports:
+  - matched maintained books
+  - missing maintained books
+  - ready books with valid chapter layouts
+  - partial books with at least one usable chapter and at least one skipped chapter
+  - books with no valid chapters
+  - unmatched extract roots that do not map to any maintained math `document_id`
+- `study inventory`, `study build`, and `study export` default to the local
+  corpus cache at `state/local_corpus/ml-letsgo/outputs/math`. Use
+  `--source-root` only when you intentionally want to override that path.
+- `study inventory` and `study build` default to
+  `--selection all_structured`, which means every extract-like directory under
+  the local corpus root is considered in-scope. Use
+  `--selection maintained_only` when you want to restrict the run back to the
+  curated `sources/math` shelf.
+- `study inventory` reports four live-run states:
+  - `built` is not used there
+  - `ready` means the extract root exists and all discovered chapters are usable
+  - `partial` means at least one chapter is usable and at least one chapter is missing required files
+  - `missing_extract` means the maintained math note has no matching extract directory under `--source-root`
+  - `no_valid_chapters` means the extract root exists but no discovered chapter has both chapter JSON and normalized markdown
+- `study inventory` also reports:
+  - `has_source_note` per book
+  - `title_source` as `source_note`, `book_manifest`, or `directory_name`
+  - `selection` for the run
+  - `unmatched_extract_roots` when `--selection maintained_only` leaves valid
+    extract directories outside the maintained note set
+- `study build` writes:
+  - `reader_stream.jsonl`
+  - `reader_plain.txt`
+  - `definition_cards.jsonl`
+  - `manifest.json`
+  - shelf `index.json`
+- Built book manifests and the shelf index distinguish `built`, `partial`,
+  `missing_extract`, and `no_valid_chapters`, and also record
+  `has_source_note`, `title_source`, and the run `selection`.
+- App-facing study titles are normalized in the derived study outputs only.
+  Source-note titles are used only when they already look clean; otherwise the
+  build prefers a cleaner manifest title and falls back to a humanized
+  directory/document ID when needed.
+- `study show --view reader` returns the ordered reader stream; `study show --view cards`
+  returns the derived definition-card deck for a built or partial book.
+- `study export --target canonical` returns the canonical artifact paths for the
+  selected built/partial books.
+- `study export --target discoflash` writes `discoflash_definition_matching.txt`
+  using the existing `discoflash` definition-matching format. It fails for a
+  selected book when there are zero derived definition cards.
+  Structural terms like `Preface`, `Proof`, and `Chapter ...` are filtered from
+  exported study-card decks.
+- `study qa` audits the current built corpus without rebuilding it. It reports:
+  - `incomplete_extract`
+  - `missing_build_artifact`
+  - `empty_reader`
+  - `reader_junk`
+  - `bad_title`
+  - `zero_card_deck`
+  - `thin_card_deck`
+  - `structural_card_term`
+- `study qa summary` returns the aggregate machine-readable audit with
+  per-category counts, a ranked priority queue, and per-book readiness fields
+  for reader vs flashcard ingestion. It also exposes the closeout gate and
+  canonical status metadata:
+  - `completion_bar`
+  - `completion_status`
+  - `remaining_severe_count`
+  - `remaining_warning_count`
+  - `summary_sha256`
+  - `canonical_status_path`
+  - `consumer_checks`
+  - `report_statuses`
+- `study qa show <book>` returns one book's QA packet with sampled row/card
+  evidence, plus `reader_ready`, `flashcard_ready`, and blocked-reason fields.
+- `state/study_quality/math/summary.json` is the canonical machine-readable
+  status authority for the study corpus. Treat all other QA/review documents as
+  derived snapshots.
+- `study qa write` writes local review files under `state/study_quality/math/`:
+  - `summary.json`
+  - `README.md`
+  - `final_review_packet.md`
+  - per-book issue files under `books/` only when warnings or severe issues exist
+- `study qa write` also archives stale contradictory deficiency artifacts such
+  as `corpus_deficiency_list.md` and `deficiency_inventory.json` under
+  `state/study_quality/math/archive/`.
+- The canonical quality-done check is:
+  - run `study qa summary --json`
+  - require `completion_status=pass`
+  - require `remaining_severe_count=0`
+  - require `remaining_warning_count=0`
+  - require `consumer_checks.vox_study_library.status=pass` when the real
+    representative review set is available in the current shelf
+- When the corpus is quality-done, `study qa write` leaves:
+  - `state/study_quality/math/summary.json`
+  - `state/study_quality/math/README.md`
+  - `state/study_quality/math/final_review_packet.md`
+  - no per-book warning files under `state/study_quality/math/books/`
+- `study pages` turns the built study corpus into generated wiki pages under
+  `state/wiki_mirror/projects/math_library/`.
+- `study pages` writes:
+  - `projects/math_library/README.md`
+  - `projects/math_library/books/<document_id>/README.md`
+  - `projects/math_library/books/<document_id>/chapters/<chapter_id>.md`
+  - `projects/math_library/state/navigation_index.json`
+  - `projects/study_dashboard/README.md`
+  - `projects/study_dashboard/books/<document_id>.md`
+  - `projects/study_dashboard/state/navigation_index.json`
+- `study pages` is manifest-driven. It discovers built books from per-book
+  `manifest.json` files and overlays the live study inventory for blocked or
+  incomplete books, so it does not collapse when `state/study_materials/math/index.json`
+  has been narrowed by a book-scoped export.
+- Generated book pages use app-ready study titles, link back to source notes
+  when they exist, expose reader/flashcard readiness, and include chapter
+  links plus direct study-artifact links.
+- Generated chapter pages group the chapter reader stream by `title_path` and
+  include chapter-local key-definition lists from `definition_cards.jsonl`.
+- The generated Study Dashboard is a cross-app coordination surface above the
+  Math Library pages. It exposes stable study selection IDs in the shared form:
+  - whole book: `<document_id>::__entire__`
+  - chapter: `<document_id>::<chapter_id>`
+- Those selection IDs are shared across the generated wiki, `vox`, and
+  `discoflash`. The dashboard now also emits concrete local shell commands for
+  fresh launch and explicit `--resume` launch against sibling app repos.
+- `study pages build` also updates `state/wiki_mirror/index.md` and
+  `state/wiki_mirror/sources/math/README.md` so the generated Math Library hub
+  is discoverable from the main wiki navigation.
+- First live-run sequence:
+  - run `study probe-source-root --path <candidate1> --path <candidate2> --json`
+  - choose the top-ranked `good_candidate` or best `partial_candidate`
+  - run `study inventory --source-root <real_math_root> --json`
+  - inspect `missing_books`, `partial_books`, and `unmatched_extract_roots`
+  - run `study build --source-root <real_math_root> --json`
+  - inspect `state/study_materials/math/index.json`
+  - run `study show <book> --view reader --json`
+  - run `study export --source-root <real_math_root> --book <book> --target discoflash --json`
+  - run `study qa summary --json`
+  - run `study qa write --json`
+  - run `study pages summary --json`
+  - run `study pages build --json`
+
 Page quality reports:
 
 - `page-quality` identifies thin notes, weak/missing summaries, and unclear hub
@@ -215,12 +427,35 @@ Design rules:
 - Harness runs are persisted separately in `state/harness.sqlite`.
 - Harness synthesis is deterministic by default; OpenAI structured-output
   synthesis is opt-in with `--synthesis openai` and requires `OPENAI_API_KEY`.
+- Local synthesis with `--synthesis local` is claim-plan-first rather than
+  prose-first. The model returns `refusal`, `refusal_reason`, and atomic
+  `claims` tied to retrieved `span_ids`; the harness renders the final answer
+  and citations after validating that plan.
+- The local path now guarantees deterministic citation rendering from retrieved
+  spans. That does not mean answer usefulness is solved. Usefulness still
+  depends on retrieval quality, claim-plan quality, and refusal thresholds such
+  as the minimum unique citation requirement.
+- Refusal-heavy local answers are an honest failure mode, not a hidden
+  regression. The stricter contract is exposing thin retrieval and conservative
+  model behavior instead of letting the model invent polished but unsupported
+  prose.
+- Claim text is still model-authored. The local path reduces hallucination
+  risk; it does not abolish it. Unsupported connective tissue can still appear
+  if claims are not truly atomic or the selected spans are weak.
 - Harness failures are mapped through the failure taxonomy, with safe retries
   and deferred remediation actions recorded in run traces.
 - Empty primary retrieval automatically applies a bounded lexical fallback
   before synthesis.
+- The local repair loop is capped at one controlled retry for invalid claim
+  plans or bad span references. First-pass validity and repaired validity are
+  separate run metrics and should never be blended in reporting.
 - `eval compare-profiles` compares eval-only retrieval profiles against the
   current span FTS baseline before any production search behavior changes.
+- `eval run` can be scoped by `--split` and exercised through
+  `--synthesis local` to measure contract integrity, refusal behavior, and
+  retrieval coverage separately.
+- `eval export-training` is for non-eval harness traces only. Training export
+  must not contaminate dev or holdout eval cases.
 - `eval cleanup-targets` turns eval retrieval misses and low-ranked expected
   paths into local editorial cleanup queues with page-quality signals.
 - `scheduled-audit run` is the scheduler-friendly checkpoint for audit,

@@ -9,7 +9,13 @@ import unittest
 
 from wiki_tool.catalog import scan_wiki
 from wiki_tool.cli import build_parser
-from wiki_tool.eval import compare_profile_reports, compare_retrieval_profiles, eval_cleanup_targets, run_eval
+from wiki_tool.eval import (
+    compare_profile_reports,
+    compare_retrieval_profiles,
+    eval_cleanup_targets,
+    export_training_examples,
+    run_eval,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -17,6 +23,16 @@ EVAL_FILE = ROOT / "eval" / "wiki_queries_v1.jsonl"
 CATALOG_DB = ROOT / "state" / "catalog.sqlite"
 FIXTURE = ROOT / "tests" / "fixtures" / "sample_wiki"
 ALLOWED_CATEGORIES = {"concept", "project", "source", "operation", "template", "fallback"}
+ALLOWED_BUCKETS = {
+    "adversarial_citation",
+    "ambiguous_retrieval",
+    "contradiction_handling",
+    "multi_document_synthesis",
+    "straight_retrieval",
+    "unsupported_refusal",
+}
+ALLOWED_SPLITS = {"dev", "holdout"}
+ALLOWED_EXPECTED_OUTCOMES = {"answer", "refuse"}
 
 
 class EvalDatasetTests(unittest.TestCase):
@@ -29,14 +45,34 @@ class EvalDatasetTests(unittest.TestCase):
         categories = {row["category"] for row in rows}
         self.assertLessEqual(categories, ALLOWED_CATEGORIES)
         self.assertTrue(ALLOWED_CATEGORIES <= categories)
+        splits = {row["split"] for row in rows}
+        self.assertEqual(splits, ALLOWED_SPLITS)
+        buckets = {row["bucket"] for row in rows}
+        self.assertLessEqual(buckets, ALLOWED_BUCKETS)
+        self.assertTrue(
+            {
+                "adversarial_citation",
+                "ambiguous_retrieval",
+                "contradiction_handling",
+                "multi_document_synthesis",
+                "unsupported_refusal",
+            }
+            <= buckets
+        )
+        self.assertIn("refuse", {row["expected_outcome"] for row in rows})
+        self.assertGreaterEqual(sum(1 for row in rows if row["gold_claim_units"]), 10)
 
         for row in rows:
             self.assertIsInstance(row["query"], str)
             self.assertTrue(row["query"].strip())
+            self.assertIn(row["split"], ALLOWED_SPLITS)
+            self.assertIn(row["bucket"], ALLOWED_BUCKETS)
+            self.assertIn(row["expected_outcome"], ALLOWED_EXPECTED_OUTCOMES)
             self.assertIsInstance(row["expected_paths"], list)
             self.assertTrue(row["expected_paths"])
             self.assertIsInstance(row["expected_hints"], list)
             self.assertTrue(row["expected_hints"])
+            self.assertIsInstance(row["gold_claim_units"], list)
             self.assertIsInstance(row["min_citations"], int)
             self.assertGreaterEqual(row["min_citations"], 1)
             for path in row["expected_paths"]:
@@ -46,6 +82,9 @@ class EvalDatasetTests(unittest.TestCase):
             for hint in row["expected_hints"]:
                 self.assertIsInstance(hint, str)
                 self.assertTrue(hint.strip())
+            for claim in row["gold_claim_units"]:
+                self.assertIsInstance(claim, str)
+                self.assertTrue(claim.strip())
 
     def test_expected_paths_exist_in_local_catalog_when_available(self) -> None:
         if not CATALOG_DB.exists():
@@ -213,6 +252,87 @@ class EvalDatasetTests(unittest.TestCase):
         help_text = stdout.getvalue()
         self.assertIn("--eval-file", help_text)
         self.assertIn("--write-report", help_text)
+        self.assertIn("--split", help_text)
+        self.assertIn("--synthesis", help_text)
+
+    def test_run_eval_filters_by_split(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, harness_db = build_clean_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="retrieval",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                        split="dev",
+                    ),
+                    eval_case(
+                        query="scanner evidence",
+                        expected_paths=["projects/demo/README.md"],
+                        expected_hints=["Scanner Evidence"],
+                        split="holdout",
+                    ),
+                ],
+            )
+
+            result = run_eval(
+                eval_file=eval_file,
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                split="dev",
+            )
+
+            self.assertEqual(result["summary"]["total_cases"], 1)
+            self.assertEqual(result["results"][0]["split"], "dev")
+
+    def test_export_training_examples_excludes_eval_queries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db, harness_db = build_clean_fixture_catalog(tmp)
+            eval_file = write_eval_file(
+                tmp,
+                [
+                    eval_case(
+                        query="retrieval",
+                        expected_paths=["concepts/retrieval.md"],
+                        expected_hints=["Retrieval"],
+                        split="holdout",
+                    )
+                ],
+            )
+            run_eval(
+                eval_file=eval_file,
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                split="holdout",
+            )
+            run_eval(
+                eval_file=write_named_eval_file(
+                    tmp,
+                    "train_eval.jsonl",
+                    [
+                        eval_case(
+                            query="scanner evidence",
+                            expected_paths=["projects/demo/README.md"],
+                            expected_hints=["Scanner Evidence"],
+                        )
+                    ],
+                ),
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+            )
+            output_path = Path(tmp) / "training.jsonl"
+
+            result = export_training_examples(
+                eval_file=eval_file,
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                output_path=output_path,
+            )
+
+            lines = [json.loads(line) for line in output_path.read_text().splitlines() if line.strip()]
+            self.assertEqual(result["exported_example_count"], 1)
+            self.assertEqual(lines[0]["query"], "scanner evidence")
 
     def test_compare_retrieval_profiles_scores_selected_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -564,7 +684,11 @@ def write_thin_note_wiki_root(root: Path) -> Path:
 
 
 def write_eval_file(tmp: str, rows: list[dict[str, object]]) -> Path:
-    path = Path(tmp) / "eval.jsonl"
+    return write_named_eval_file(tmp, "eval.jsonl", rows)
+
+
+def write_named_eval_file(tmp: str, name: str, rows: list[dict[str, object]]) -> Path:
+    path = Path(tmp) / name
     path.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n")
     return path
 
@@ -575,14 +699,18 @@ def eval_case(
     expected_paths: list[str],
     expected_hints: list[str],
     min_citations: int = 2,
+    split: str | None = None,
 ) -> dict[str, object]:
-    return {
+    row: dict[str, object] = {
         "category": "concept",
         "expected_hints": expected_hints,
         "expected_paths": expected_paths,
         "min_citations": min_citations,
         "query": query,
     }
+    if split is not None:
+        row["split"] = split
+    return row
 
 
 def profile_report(profile_id: str, results: list[dict[str, object]]) -> dict[str, object]:

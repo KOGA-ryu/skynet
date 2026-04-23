@@ -4,6 +4,7 @@ import io
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -21,9 +22,16 @@ from wiki_tool.harness import (
     load_specs,
     parse_yaml_subset,
     run_answer_with_citations,
+    synthesis_adapter_for,
     validate_harness_specs,
 )
-from wiki_tool.llm import StructuredSynthesisAdapter, StructuredSynthesisError, SynthesisResult
+from wiki_tool.llm import (
+    LocalStructuredSynthesisAdapter,
+    StructuredSynthesisAdapter,
+    StructuredSynthesisError,
+    SynthesisResult,
+    synthesis_output_schema,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_wiki"
@@ -31,6 +39,80 @@ SPEC_DIR = Path(__file__).parents[1] / "harness_specs"
 
 
 class HarnessTests(unittest.TestCase):
+    def test_local_synthesis_adapter_accepts_wrapped_json_stdout(self) -> None:
+        script = "\n".join(
+            [
+                "import json",
+                "payload = {",
+                "  'claims': [{'claim_id': 'c1', 'text': 'Local answer', 'span_ids': ['span:1']}],",
+                "  'refusal': False,",
+                "  'refusal_reason': ''",
+                "}",
+                "print('banner before')",
+                "print('```json')",
+                "print(json.dumps(payload))",
+                "print('```')",
+                "print('trailer after')",
+            ]
+        )
+        adapter = LocalStructuredSynthesisAdapter(
+            command=[sys.executable, "-c", script],
+            timeout_seconds=2,
+        )
+
+        result = adapter.synthesize(
+            user_query="what is retrieval",
+            chunks=[
+                {
+                    "artifact_id": "concepts/retrieval.md",
+                    "chunk_id": "span:1",
+                    "heading": "What It Means Here",
+                    "path": "concepts/retrieval.md",
+                    "text": "retrieval exact quote",
+                }
+            ],
+            min_citations=1,
+            output_schema=synthesis_output_schema(),
+        )
+
+        self.assertEqual(result.output["claims"][0]["text"], "Local answer")
+        self.assertEqual(result.output["claims"][0]["span_ids"], ["span:1"])
+        self.assertEqual(result.metadata["provider"], "local")
+        self.assertEqual(result.metadata["model"], "local")
+
+    def test_local_synthesis_adapter_missing_command_fails_closed(self) -> None:
+        adapter = LocalStructuredSynthesisAdapter(command=["/path/does/not/exist"], timeout_seconds=1)
+
+        with self.assertRaises(StructuredSynthesisError) as ctx:
+            adapter.synthesize(
+                user_query="what is retrieval",
+                chunks=[],
+                min_citations=1,
+                output_schema=synthesis_output_schema(),
+            )
+
+        self.assertEqual(ctx.exception.failure_code, "LLM_PROVIDER_CONFIG_MISSING")
+
+    def test_local_synthesis_adapter_timeout_raises_llm_error(self) -> None:
+        adapter = LocalStructuredSynthesisAdapter(
+            command=[sys.executable, "-c", "import time; time.sleep(2)"],
+            timeout_seconds=0.1,
+        )
+
+        with self.assertRaises(StructuredSynthesisError) as ctx:
+            adapter.synthesize(
+                user_query="what is retrieval",
+                chunks=[],
+                min_citations=1,
+                output_schema=synthesis_output_schema(),
+            )
+
+        self.assertEqual(ctx.exception.failure_code, "LLM_SYNTHESIS_ERROR")
+
+    def test_synthesis_adapter_for_supports_local(self) -> None:
+        adapter = synthesis_adapter_for(synthesis="local", model=None)
+        self.assertIsInstance(adapter, LocalStructuredSynthesisAdapter)
+
     def test_extract_and_parse_yaml_blocks(self) -> None:
         text = """# Specs
 
@@ -263,6 +345,60 @@ tools_allowed:
             self.assertEqual(synth_step["tool_name"], "llm.structured_synthesis")
             self.assertTrue(synth_step["output"]["schema_valid"])
             self.assertEqual(shown["run"]["metrics"]["synthesis_provider"], "fake")
+
+    def test_answer_harness_accepts_local_synthesis_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = Path(tmp) / "catalog.sqlite"
+            harness_db = Path(tmp) / "harness.sqlite"
+            scan_wiki(FIXTURE, catalog_db)
+            script = "\n".join(
+                [
+                    "import json",
+                    "import sys",
+                    "prompt = sys.argv[-1]",
+                    "marker = 'Evidence spans JSON (compact):\\n'",
+                    "chunks = json.loads(prompt.split(marker, 1)[1])",
+                    "claims = []",
+                    "for index, chunk in enumerate(chunks[:2], start=1):",
+                    "    claims.append({",
+                    "        'claim_id': f'c{index}',",
+                    "        'text': f\"Claim {index} about retrieval\",",
+                    "        'span_ids': [chunk['span_id']]",
+                    "    })",
+                    "payload = {",
+                    "  'claims': claims,",
+                    "  'refusal': False,",
+                    "  'refusal_reason': ''",
+                    "}",
+                    "print(json.dumps(payload))",
+                ]
+            )
+            adapter = LocalStructuredSynthesisAdapter(
+                command=[sys.executable, "-c", script],
+                timeout_seconds=2,
+            )
+
+            result = run_answer_with_citations(
+                "retrieval",
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                spec_dir=SPEC_DIR,
+                synthesis="local",
+                synthesis_adapter=adapter,
+            )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["synthesis"]["provider"], "local")
+            shown = get_harness_run(result["run_id"], harness_db)
+            synth_step = shown["steps"][2]
+            self.assertEqual(synth_step["step_type"], "llm")
+            self.assertEqual(synth_step["tool_name"], "llm.structured_synthesis")
+            self.assertTrue(synth_step["output"]["schema_valid"])
+            self.assertEqual(synth_step["output"]["claim_plan"]["claims"][0]["claim_id"], "c1")
+            self.assertTrue(result["citations"])
+            self.assertEqual(shown["run"]["metrics"]["synthesis_provider"], "local")
+            self.assertEqual(shown["run"]["metrics"]["synthesis_model"], "local")
+            self.assertTrue(shown["run"]["metrics"]["synthesis_first_pass_valid_span_refs"])
 
     def test_answer_harness_rejects_malformed_structured_adapter_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -515,6 +651,37 @@ tools_allowed:
                 },
             )
 
+    def test_local_claim_plan_invalid_retries_once_and_records_first_pass_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = Path(tmp) / "catalog.sqlite"
+            harness_db = Path(tmp) / "harness.sqlite"
+            scan_wiki(FIXTURE, catalog_db)
+            adapter = FakeInvalidLocalClaimPlanAdapter()
+
+            result = run_answer_with_citations(
+                "retrieval",
+                catalog_db=catalog_db,
+                harness_db=harness_db,
+                spec_dir=SPEC_DIR,
+                synthesis="local",
+                synthesis_adapter=adapter,
+            )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(adapter.calls, 2)
+            shown = get_harness_run(result["run_id"], harness_db)
+            synth_output = shown["steps"][2]["output"]
+            self.assertFalse(synth_output["first_pass_valid_span_refs"])
+            self.assertTrue(synth_output["repaired_success"])
+            self.assertIn(
+                ("CLAIM_PLAN_INVALID", "retry", "applied"),
+                {
+                    (item["source_failure_code"], item["action"], item["status"])
+                    for item in synth_output["failure_actions"]
+                },
+            )
+            self.assertEqual(result["failures"], [])
+
     def test_answer_harness_rejects_unknown_citation_chunk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             catalog_db = Path(tmp) / "catalog.sqlite"
@@ -578,6 +745,7 @@ tools_allowed:
         help_text = stdout.getvalue()
         self.assertIn("--synthesis", help_text)
         self.assertIn("--llm-model", help_text)
+        self.assertIn("local", help_text)
 
     def test_cli_help_exposes_harness_diff_controls(self) -> None:
         parser = build_parser()
@@ -592,14 +760,14 @@ tools_allowed:
 class FakeValidAdapter(StructuredSynthesisAdapter):
     provider = "fake"
 
-    def synthesize(self, *, user_query, chunks, min_citations, output_schema):
+    def synthesize(self, *, user_query, chunks, min_citations, output_schema, repair_errors=None):
         return fake_valid_synthesis_result(chunks, min_citations)
 
 
 class FakeWrongCitationTypeAdapter(StructuredSynthesisAdapter):
     provider = "fake"
 
-    def synthesize(self, *, user_query, chunks, min_citations, output_schema):
+    def synthesize(self, *, user_query, chunks, min_citations, output_schema, repair_errors=None):
         return SynthesisResult(
             output={"answer_markdown": "Wrong citation type.", "citations": "not a list"},
             metadata={"model": "fake-model", "provider": self.provider, "token_usage": None},
@@ -612,7 +780,7 @@ class FakeMalformedAdapter(StructuredSynthesisAdapter):
     def __init__(self) -> None:
         self.calls = 0
 
-    def synthesize(self, *, user_query, chunks, min_citations, output_schema):
+    def synthesize(self, *, user_query, chunks, min_citations, output_schema, repair_errors=None):
         self.calls += 1
         return SynthesisResult(
             output={"answer_markdown": "Missing citations."},
@@ -626,7 +794,7 @@ class FakeSchemaRetryAdapter(StructuredSynthesisAdapter):
     def __init__(self) -> None:
         self.calls = 0
 
-    def synthesize(self, *, user_query, chunks, min_citations, output_schema):
+    def synthesize(self, *, user_query, chunks, min_citations, output_schema, repair_errors=None):
         self.calls += 1
         if self.calls == 1:
             return SynthesisResult(
@@ -642,7 +810,7 @@ class FakeTransientErrorAdapter(StructuredSynthesisAdapter):
     def __init__(self) -> None:
         self.calls = 0
 
-    def synthesize(self, *, user_query, chunks, min_citations, output_schema):
+    def synthesize(self, *, user_query, chunks, min_citations, output_schema, repair_errors=None):
         self.calls += 1
         if self.calls == 1:
             raise StructuredSynthesisError("temporary structured synthesis failure")
@@ -652,7 +820,7 @@ class FakeTransientErrorAdapter(StructuredSynthesisAdapter):
 class FakeUnknownCitationAdapter(StructuredSynthesisAdapter):
     provider = "fake"
 
-    def synthesize(self, *, user_query, chunks, min_citations, output_schema):
+    def synthesize(self, *, user_query, chunks, min_citations, output_schema, repair_errors=None):
         return SynthesisResult(
             output={
                 "answer_markdown": "Fake answer with bad citation.",
@@ -666,6 +834,39 @@ class FakeUnknownCitationAdapter(StructuredSynthesisAdapter):
                 ],
             },
             metadata={"model": "fake-model", "provider": self.provider, "token_usage": None},
+        )
+
+
+class FakeInvalidLocalClaimPlanAdapter(StructuredSynthesisAdapter):
+    provider = "local"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def synthesize(self, *, user_query, chunks, min_citations, output_schema, repair_errors=None):
+        self.calls += 1
+        if self.calls == 1:
+            return SynthesisResult(
+                output={
+                    "claims": [{"claim_id": "c1", "text": "bad claim", "span_ids": ["span:missing"]}],
+                    "refusal": False,
+                    "refusal_reason": "",
+                },
+                metadata={"model": "local", "provider": self.provider, "token_usage": None},
+            )
+        return SynthesisResult(
+            output={
+                "claims": [
+                    {
+                        "claim_id": "c1",
+                        "text": "good claim",
+                        "span_ids": [chunk["chunk_id"] for chunk in chunks[:2]],
+                    }
+                ],
+                "refusal": False,
+                "refusal_reason": "",
+            },
+            metadata={"model": "local", "provider": self.provider, "token_usage": None},
         )
 
 
@@ -839,6 +1040,12 @@ def base_failure_taxonomy() -> dict:
                 "code": "RETRIEVAL_EMPTY",
                 "description": "Retriever returned zero chunks.",
                 "respond": [{"action": "expand_retrieval"}, {"action": "retry"}],
+                "severity": "high",
+            },
+            {
+                "code": "CLAIM_PLAN_INVALID",
+                "description": "Local claim plan failed validation or referenced invalid spans.",
+                "respond": [{"action": "retry"}, {"action": "abort"}],
                 "severity": "high",
             },
             {

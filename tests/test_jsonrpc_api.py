@@ -146,6 +146,38 @@ class JsonRpcApiTests(unittest.TestCase):
             self.assertEqual(bad_synthesis["error"]["code"], INVALID_PARAMS)
             self.assertEqual(missing_run["error"]["code"], INVALID_PARAMS)
 
+    def test_harness_run_accepts_local_synthesis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_db = fixture_catalog(tmp)
+            harness_db = Path(tmp) / "harness.sqlite"
+
+            with patch(
+                "wiki_tool.jsonrpc_api.run_answer_with_citations",
+                return_value={
+                    "answer_markdown": "local answer",
+                    "citations": [],
+                    "failure_actions": [],
+                    "failures": [],
+                    "harness_db": str(harness_db),
+                    "run_id": "run:test",
+                    "status": "pass",
+                    "synthesis": {"provider": "local", "model": "local"},
+                },
+            ) as mocked, patch(
+                "wiki_tool.jsonrpc_api.get_harness_run",
+                return_value={"run": {"metrics": {"synthesis_provider": "local"}}},
+            ):
+                response = handle_jsonrpc(
+                    request(1, "harness.run", {"query": "retrieval", "synthesis": "local"}),
+                    db_path=catalog_db,
+                    harness_db=harness_db,
+                    trace_path=None,
+                )
+
+            self.assertEqual(response["result"]["status"], "pass")
+            self.assertEqual(response["result"]["synthesis"]["provider"], "local")
+            self.assertEqual(mocked.call_args.kwargs["synthesis"], "local")
+
     def test_limits_are_clamped_and_mark_truncated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             catalog_db = many_span_catalog(tmp)
