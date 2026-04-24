@@ -55,8 +55,8 @@ Tracked manifest shape:
 ```json
 {
   "version": 1,
-  "environment_id": "6940d1f248c48191af000707ccee3b05",
-  "environment_label": "suits",
+  "environment_id": "69eb85e9b3088191aa1fde9e14dc37d4",
+  "environment_label": "KOGA-ryu/skynet",
   "allowed_fetch_remote_identities": [
     "github.com/koga-ryu/skynet"
   ]
@@ -76,7 +76,7 @@ and exits nonzero on failure.
 
 ```bash
 cd ~/dev/skynet
-CODEX_CLOUD_ENV_ID=6940d1f248c48191af000707ccee3b05 cargo run --bin codex_cloud_probe -- --attempt-index 1
+CODEX_CLOUD_ENV_ID=69eb85e9b3088191aa1fde9e14dc37d4 cargo run --bin codex_cloud_probe -- --attempt-index 1
 ```
 
 This probe still enforces the same preflight truth as the live proof:
@@ -96,7 +96,7 @@ events through `cleanroom.db`.
 
 ```bash
 cd ~/dev/skynet
-CODEX_CLOUD_ENV_ID=6940d1f248c48191af000707ccee3b05 cargo run --bin codex_cloud_canary -- --db-path cleanroom.db --canary-id canary-001
+CODEX_CLOUD_ENV_ID=69eb85e9b3088191aa1fde9e14dc37d4 cargo run --bin codex_cloud_canary -- --db-path cleanroom.db --canary-id canary-001
 ```
 
 Interpretation:

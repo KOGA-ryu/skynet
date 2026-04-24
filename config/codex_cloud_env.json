@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "environment_id": "6940d1f248c48191af000707ccee3b05",
-  "environment_label": "suits",
+  "environment_id": "69eb85e9b3088191aa1fde9e14dc37d4",
+  "environment_label": "KOGA-ryu/skynet",
   "allowed_fetch_remote_identities": [
     "github.com/koga-ryu/skynet"
   ]
