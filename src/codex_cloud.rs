@@ -16,7 +16,7 @@ use crate::model::{
 };
 
 const ACTIVE_TASK_STATUSES: &[&str] = &["queued", "pending", "running", "in_progress"];
-const SUCCESS_TASK_STATUSES: &[&str] = &["completed", "succeeded", "success"];
+const SUCCESS_TASK_STATUSES: &[&str] = &["completed", "succeeded", "success", "ready"];
 const FAILURE_TASK_STATUSES: &[&str] = &["failed", "cancelled", "canceled", "error"];
 const MAX_LIST_LIMIT: &str = "20";
 const ENV_MANIFEST_REL_PATH: &str = "config/codex_cloud_env.json";

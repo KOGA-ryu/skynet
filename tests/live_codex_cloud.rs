@@ -13,7 +13,7 @@ use wiki_cleanroom::metadata::RuleBasedMetadata;
 use wiki_cleanroom::model::{PacketId, RawDocument, ReplayBundle, SourceKind};
 use wiki_cleanroom::preflight::RuleBasedPreflight;
 
-const ACCEPTED_SUCCESS_STATUSES: &[&str] = &["completed", "succeeded", "success"];
+const ACCEPTED_SUCCESS_STATUSES: &[&str] = &["completed", "succeeded", "success", "ready"];
 
 type LiveCleanroom = Cleanroom<RuleBasedPreflight, CodexCloudSummarizer, RuleBasedMetadata>;
 
