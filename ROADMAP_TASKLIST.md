@@ -1,6 +1,6 @@
 # Cleanroom Milestone Ledger
 
-Last updated: 2026-04-23
+Last updated: 2026-04-24
 
 This file is the active execution ledger for the cleanroom roadmap. Every new
 implementation packet should reference a phase and milestone from
@@ -51,18 +51,18 @@ Milestone 1: One packet enters, one clean node exits
 
 ### Next Cuts
 
-1. Freeze the roadmap/docs packet as canonical project memory.
-2. Lock remaining review semantics into a dedicated review-gate contract.
-3. Keep the storage-backed packet lifecycle stable while tightening cloud
-   adapter edges.
-4. Prove the shell-driven review path in a live operator run and tighten any
-   remaining gate-policy gaps without hiding state.
+1. Prove the shell-driven review path in a live operator run.
+2. Tighten any remaining gate-policy gaps exposed by the shell walkthrough
+   without hiding state.
+3. Lock remaining review semantics into a dedicated review-gate contract.
+4. Keep the storage-backed packet lifecycle stable while work shifts to the
+   operator shell.
 
 ## Milestone Status
 
 ### Milestone 1: One Packet Enters, One Clean Node Exits
 
-Status: in progress
+Status: backend proof complete; shell-driven review proof pending
 
 Proof status:
 
@@ -79,7 +79,7 @@ Proof status:
 
 ### Milestone 2: Real Review Shell
 
-Status: in progress
+Status: complete
 
 Proof status:
 
@@ -147,7 +147,7 @@ Status: in progress
 - [x] task polling and status handling
 - [x] output normalization into internal result schema
 - [x] failure quarantine path
-- [ ] verified task-id resolution against a live environment
+- [x] verified task-id resolution against a live environment
 
 ### Phase 4: Review Queue and Cleanroom Actions
 
