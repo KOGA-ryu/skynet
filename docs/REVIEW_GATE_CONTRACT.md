@@ -79,12 +79,24 @@ Approve should only be possible when the reviewer can inspect:
 
 ## Current Non-Goals
 
-- stale and dirty remain persisted policy inputs only in this phase
-- real stale/dirty derivation is intentionally deferred
 - no extra shell layout or RPC changes are required for the current gate engine
+
+## Derived Stale / Dirty Truth
+
+- `stale` means the current reviewable version no longer matches the persisted
+  gate baseline version
+- `dirty` means the packet became stale after it was claimed for review
+- derived review version is fingerprinted from persisted packet, cloud result,
+  validation, and lineage successor state
+- reviewer acknowledgements, queue state, gate booleans, and timestamps do not
+  participate in version hashing
+- stale can appear on pending or in-review packets
+- dirty remains false unless version drift happened after `claimed_at`
+- stale and dirty still block `approve`, but do not block `reject` or `rework`
 
 ## Current Status
 
-The backend and shell now share one explicit review gate engine. Approve is the
-strict action, while reject and rework remain available on claimed packets once
-required fields are loaded and note policy passes.
+The backend and shell now share one explicit review gate engine, and stale /
+dirty truth is derived from persisted reviewable state instead of manual flag
+edits. Approve is the strict action, while reject and rework remain available
+on claimed packets once required fields are loaded and note policy passes.

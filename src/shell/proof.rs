@@ -87,7 +87,7 @@ pub fn create_shell_proof_workspace(
     })?;
     fs::remove_file(&seed_source_db_path).ok();
 
-    let db = Database::open(db_path.to_string_lossy().as_ref())?;
+    let mut db = Database::open(db_path.to_string_lossy().as_ref())?;
     let queue_items = db.list_review_items()?;
     let expected_initial_queue_state = queue_items
         .iter()
@@ -115,7 +115,7 @@ pub fn create_shell_proof_workspace(
         })?;
 
     let view = storage_runtime_view(
-        &db,
+        &mut db,
         env!("CARGO_PKG_VERSION"),
         reviewer_identity(reviewer),
         None,

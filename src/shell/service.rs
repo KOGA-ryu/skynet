@@ -8,8 +8,8 @@ use crate::metadata::RuleBasedMetadata;
 use crate::model::{PacketId, ReviewDecision};
 use crate::preflight::RuleBasedPreflight;
 use crate::review::{
-    precondition_reason_text, validate_claim_action, validate_terminal_submission,
-    ReviewActionKind, ReviewPreconditionKind,
+    precondition_reason_text, refresh_review_gate_state, validate_claim_action,
+    validate_terminal_submission, ReviewActionKind, ReviewPreconditionKind,
 };
 use crate::shell::api::{
     milestone_capabilities, ActionReceiptDto, ApprovePacketParams, ClaimStoragePacketParams,
@@ -168,12 +168,12 @@ impl ShellService {
         packet_id: Option<String>,
         last_view_revision: Option<String>,
     ) -> JsonRpcResponse {
-        let db = match Database::open(&self.storage_path) {
+        let mut db = match Database::open(&self.storage_path) {
             Ok(db) => db,
             Err(err) => return self.storage_error(id, err),
         };
         match storage_runtime_view(
-            &db,
+            &mut db,
             &self.service_version,
             self.reviewer_identity.clone(),
             self.last_action_receipt.clone(),
@@ -351,7 +351,7 @@ impl ShellService {
         notes: Option<&str>,
     ) -> Result<(), JsonRpcResponse> {
         let reviewer = self.reviewer_name();
-        let db = match Database::open(&self.storage_path) {
+        let mut db = match Database::open(&self.storage_path) {
             Ok(db) => db,
             Err(err) => return Err(self.storage_error(id, err)),
         };
@@ -359,8 +359,8 @@ impl ShellService {
             Ok(item) => item,
             Err(err) => return Err(self.storage_error(id, err)),
         };
-        let gate_state = match db.load_review_gate_state(packet_id) {
-            Ok(state) => state,
+        let gate_state = match refresh_review_gate_state(&mut db, packet_id) {
+            Ok(state) => Some(state),
             Err(err) => return Err(self.storage_error(id, err)),
         };
         match validate_terminal_submission(
@@ -635,6 +635,8 @@ fn parse_params<T: serde::de::DeserializeOwned>(
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::thread;
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use serde_json::json;
@@ -888,6 +890,7 @@ mod tests {
     fn approve_returns_structured_gate_block_reason_and_reject_can_still_succeed() {
         let db_path = temp_db_path("shell_service_gate_block");
         let packet_id = build_pending_db(&db_path).remove(0);
+        inject_nonblocking_validation_drift(&db_path, &packet_id);
         let mut service = ShellService::new(db_path.to_string_lossy().to_string());
         initialize_with_reviewer(&mut service, Some("ace"));
         let claim = service.handle_request(crate::shell::api::JsonRpcRequest {
@@ -897,7 +900,6 @@ mod tests {
             params: Some(json!({ "packet_id": packet_id })),
         });
         assert!(claim.error.is_none());
-        mark_packet_stale(&db_path, &packet_id);
 
         let approve = service.handle_request(crate::shell::api::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -1037,14 +1039,20 @@ mod tests {
         packet_ids
     }
 
-    fn mark_packet_stale(path: &std::path::Path, packet_id: &str) {
+    fn inject_nonblocking_validation_drift(path: &std::path::Path, packet_id: &str) {
         let mut db = Database::open(path.to_string_lossy().as_ref()).unwrap();
-        let mut gate_state = db
-            .load_review_gate_state(&crate::model::PacketId(packet_id.to_string()))
-            .unwrap()
+        let packet_id = crate::model::PacketId(packet_id.to_string());
+        let packet = db.load_packet(&packet_id).unwrap().unwrap();
+        let mut validation = db.load_validation(&packet_id).unwrap().unwrap();
+        thread::sleep(Duration::from_millis(2));
+        validation.issues.push(crate::model::ValidationIssue {
+            issue_id: format!("issue_drift_{}", packet_id.0),
+            severity: crate::model::ValidationSeverity::Warning,
+            blocking: false,
+            target_id: Some(packet.packet_id.0.clone()),
+            message: "non-blocking review drift".to_string(),
+        });
+        db.save_validation(&packet.document_id, &validation)
             .unwrap();
-        gate_state.stale_flag = true;
-        gate_state.approve_enabled = false;
-        db.save_review_gate_state(&gate_state).unwrap();
     }
 }

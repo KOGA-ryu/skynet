@@ -634,6 +634,27 @@ ORDER BY attempt_index ASC, started_at ASC, trace_id ASC
         self.load_packet_stage("validation_reports", &packet_id.0)
     }
 
+    pub(crate) fn load_cloud_packet_payload_with_updated_at(
+        &self,
+        packet_id: &PacketId,
+    ) -> Result<Option<(String, DateTime<Utc>)>, PipelineError> {
+        self.load_packet_stage_payload_with_updated_at("cloud_packets", packet_id)
+    }
+
+    pub(crate) fn load_cloud_result_payload_with_updated_at(
+        &self,
+        packet_id: &PacketId,
+    ) -> Result<Option<(String, DateTime<Utc>)>, PipelineError> {
+        self.load_packet_stage_payload_with_updated_at("cloud_results", packet_id)
+    }
+
+    pub(crate) fn load_validation_payload_with_updated_at(
+        &self,
+        packet_id: &PacketId,
+    ) -> Result<Option<(String, DateTime<Utc>)>, PipelineError> {
+        self.load_packet_stage_payload_with_updated_at("validation_reports", packet_id)
+    }
+
     pub fn enqueue_review(
         &mut self,
         packet_id: &PacketId,
@@ -1644,6 +1665,34 @@ ON CONFLICT(packet_id) DO UPDATE SET
             .map_err(|e| PipelineError::Storage(format!("failed loading from {table}: {e}")))?;
         match payload {
             Some(json) => Ok(Some(from_json(&json)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn load_packet_stage_payload_with_updated_at(
+        &self,
+        table: &str,
+        packet_id: &PacketId,
+    ) -> Result<Option<(String, DateTime<Utc>)>, PipelineError> {
+        let sql = format!("SELECT payload_json, updated_at FROM {table} WHERE packet_id = ?1");
+        let row: Option<(String, String)> = self
+            .conn
+            .query_row(&sql, params![&packet_id.0], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()
+            .map_err(|e| {
+                PipelineError::Storage(format!(
+                    "failed loading payload and updated_at from {table}: {e}"
+                ))
+            })?;
+        match row {
+            Some((payload_json, updated_at_raw)) => Ok(Some((
+                payload_json,
+                parse_ts(Some(updated_at_raw))
+                    .map_err(PipelineError::Storage)?
+                    .expect("updated_at is required"),
+            ))),
             None => Ok(None),
         }
     }

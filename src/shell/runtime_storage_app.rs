@@ -1,11 +1,12 @@
 use crate::error::PipelineError;
 use crate::model::{PacketId, QueueStatus, ReviewQueueItem};
+use crate::review::refresh_review_gate_state;
 use crate::shell::api::{ActionReceiptDto, QueueRowDto, ReviewerIdentityDto, ShellViewDto};
 use crate::shell::view_model::{build_shell_view, view_error};
 use crate::storage::Database;
 
 pub fn storage_runtime_view(
-    db: &Database,
+    db: &mut Database,
     service_version: &str,
     reviewer_identity: ReviewerIdentityDto,
     last_action_receipt: Option<ActionReceiptDto>,
@@ -13,6 +14,7 @@ pub fn storage_runtime_view(
     _last_view_revision: Option<&str>,
 ) -> Result<ShellViewDto, PipelineError> {
     let review_items = db.list_review_items()?;
+    refresh_review_queue_gate_states(db, &review_items)?;
     let queue_rows = build_queue_rows(db, &review_items)?;
 
     if let Some(packet_id) = requested_packet_id {
@@ -37,6 +39,8 @@ pub fn storage_runtime_view(
                 ),
             ));
         }
+        let _ = refresh_review_gate_state(db, &packet_id)?;
+        let replay = db.load_replay_bundle(&packet_id)?;
         ensure_selected_bundle_ready(&replay, &packet_id.0)?;
         let view_state = if replay
             .gate_state
@@ -67,6 +71,7 @@ pub fn storage_runtime_view(
         .iter()
         .find(|item| item.status == QueueStatus::InReview)
     {
+        let _ = refresh_review_gate_state(db, &item.packet_id)?;
         let replay = db.load_replay_bundle(&item.packet_id)?;
         ensure_selected_bundle_ready(&replay, &item.packet_id.0)?;
         let view_state = if replay
@@ -98,6 +103,7 @@ pub fn storage_runtime_view(
         .iter()
         .find(|item| item.status == QueueStatus::Pending)
     {
+        let _ = refresh_review_gate_state(db, &item.packet_id)?;
         let replay = db.load_replay_bundle(&item.packet_id)?;
         ensure_selected_bundle_ready(&replay, &item.packet_id.0)?;
         let view_state = if replay
@@ -171,6 +177,16 @@ fn build_queue_rows(
         .collect()
 }
 
+fn refresh_review_queue_gate_states(
+    db: &mut Database,
+    review_items: &[ReviewQueueItem],
+) -> Result<(), PipelineError> {
+    for item in review_items {
+        let _ = refresh_review_gate_state(db, &item.packet_id)?;
+    }
+    Ok(())
+}
+
 fn ensure_selected_bundle_ready(
     replay: &crate::model::ReplayBundle,
     packet_id: &str,
@@ -192,6 +208,8 @@ fn ensure_selected_bundle_ready(
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::thread;
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::cleanroom::Cleanroom;
@@ -208,10 +226,10 @@ mod tests {
     fn explicit_requested_packet_is_selected() {
         let db_path = temp_db_path("runtime_storage_requested");
         let packet_id = build_ready_packets(&db_path, 1, false).remove(0);
-        let db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
+        let mut db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
 
         let view = storage_runtime_view(
-            &db,
+            &mut db,
             env!("CARGO_PKG_VERSION"),
             reviewer_identity(),
             None,
@@ -229,10 +247,10 @@ mod tests {
     fn missing_requested_packet_returns_packet_missing_state() {
         let db_path = temp_db_path("runtime_storage_missing");
         build_ready_packets(&db_path, 1, false);
-        let db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
+        let mut db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
 
         let view = storage_runtime_view(
-            &db,
+            &mut db,
             env!("CARGO_PKG_VERSION"),
             reviewer_identity(),
             None,
@@ -251,10 +269,10 @@ mod tests {
     fn current_in_review_is_selected_when_packet_is_not_requested() {
         let db_path = temp_db_path("runtime_storage_in_review");
         let packet_ids = build_ready_packets(&db_path, 2, true);
-        let db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
+        let mut db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
 
         let view = storage_runtime_view(
-            &db,
+            &mut db,
             env!("CARGO_PKG_VERSION"),
             reviewer_identity(),
             None,
@@ -275,10 +293,10 @@ mod tests {
     fn newest_pending_is_selected_when_no_packet_is_in_review() {
         let db_path = temp_db_path("runtime_storage_newest_pending");
         let packet_ids = build_ready_packets(&db_path, 2, false);
-        let db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
+        let mut db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
 
         let view = storage_runtime_view(
-            &db,
+            &mut db,
             env!("CARGO_PKG_VERSION"),
             reviewer_identity(),
             None,
@@ -298,10 +316,10 @@ mod tests {
     #[test]
     fn storage_empty_state_is_emitted_when_no_packets_exist() {
         let db_path = temp_db_path("runtime_storage_empty");
-        let db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
+        let mut db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
 
         let view = storage_runtime_view(
-            &db,
+            &mut db,
             env!("CARGO_PKG_VERSION"),
             reviewer_identity(),
             None,
@@ -312,6 +330,31 @@ mod tests {
         assert_eq!(view.view_state, "storage_empty");
         assert_eq!(view.selection_reason, "no_packet_available");
         assert!(view.active_packet_id.is_none());
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn stale_pending_packet_is_selected_and_rendered_as_stale_view() {
+        let db_path = temp_db_path("runtime_storage_stale_pending");
+        let packet_id = build_ready_packets(&db_path, 1, false).remove(0);
+        inject_nonblocking_validation_drift(&db_path, &packet_id);
+        let mut db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
+
+        let view = storage_runtime_view(
+            &mut db,
+            env!("CARGO_PKG_VERSION"),
+            reviewer_identity(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(view.selection_reason, "newest_pending");
+        assert_eq!(view.view_state, "stale_view");
+        assert_eq!(view.active_packet_id.as_deref(), Some(packet_id.as_str()));
+        assert_eq!(view.left_rail.rows[0].packet_id, packet_id);
+        assert!(view.left_rail.rows[0].stale);
 
         fs::remove_file(db_path).ok();
     }
@@ -361,5 +404,22 @@ mod tests {
             cleanroom.claim_next_review("ace").unwrap().unwrap();
         }
         packet_ids
+    }
+
+    fn inject_nonblocking_validation_drift(path: &Path, packet_id: &str) {
+        let mut db = Database::open(path.to_string_lossy().as_ref()).unwrap();
+        let packet_id = crate::model::PacketId(packet_id.to_string());
+        let packet = db.load_packet(&packet_id).unwrap().unwrap();
+        let mut validation = db.load_validation(&packet_id).unwrap().unwrap();
+        thread::sleep(Duration::from_millis(2));
+        validation.issues.push(crate::model::ValidationIssue {
+            issue_id: format!("issue_drift_{}", packet_id.0),
+            severity: crate::model::ValidationSeverity::Warning,
+            blocking: false,
+            target_id: Some(packet.packet_id.0.clone()),
+            message: "non-blocking review drift".to_string(),
+        });
+        db.save_validation(&packet.document_id, &validation)
+            .unwrap();
     }
 }

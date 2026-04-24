@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use serde_json::json;
 
 use crate::error::PipelineError;
 use crate::model::{
@@ -6,6 +7,7 @@ use crate::model::{
     ReviewGateState, ReviewId, ReviewQueueItem, ReviewReadyPacket, ReviewStamp, ValidationIssue,
     ValidationReport,
 };
+use crate::storage::Database;
 
 pub struct Reviewer;
 
@@ -64,8 +66,72 @@ impl Reviewer {
     }
 }
 
-pub fn packet_version(packet_id: &PacketId) -> String {
-    format!("version_for_{}", packet_id.0)
+pub fn derive_review_version(db: &Database, packet_id: &PacketId) -> Result<String, PipelineError> {
+    let (packet_json, _) = required_stage_payload(
+        db.load_cloud_packet_payload_with_updated_at(packet_id)?,
+        "packet",
+        packet_id,
+    )?;
+    let (result_json, _) = required_stage_payload(
+        db.load_cloud_result_payload_with_updated_at(packet_id)?,
+        "result",
+        packet_id,
+    )?;
+    let (validation_json, _) = required_stage_payload(
+        db.load_validation_payload_with_updated_at(packet_id)?,
+        "validation",
+        packet_id,
+    )?;
+    let lineage = db
+        .load_packet_lineage(packet_id)?
+        .ok_or_else(|| PipelineError::NotFound(format!("lineage {} not found", packet_id.0)))?;
+    let lineage_json = json!({
+        "successor_packet_id": lineage.successor_packet_id.as_ref().map(|value| value.0.clone()),
+    })
+    .to_string();
+    let digest = crate::model::sha256_hex(&format!(
+        "packet:{packet_json}\nresult:{result_json}\nvalidation:{validation_json}\nlineage:{lineage_json}"
+    ));
+    Ok(format!("ver_{}", &digest[..16]))
+}
+
+pub fn refresh_review_gate_state(
+    db: &mut Database,
+    packet_id: &PacketId,
+) -> Result<ReviewGateState, PipelineError> {
+    let validation = db
+        .load_validation(packet_id)?
+        .ok_or_else(|| PipelineError::NotFound(format!("validation {} not found", packet_id.0)))?;
+    let diff_states = db.load_review_diff_states(packet_id)?;
+    let evidence_states = db.load_review_evidence_states(packet_id)?;
+    let prior = db.load_review_gate_state(packet_id)?;
+    let current_version = derive_review_version(db, packet_id)?;
+    let latest_reviewable_change_at = latest_reviewable_change_at(db, packet_id)?;
+    let review_item = db.load_review_item(packet_id)?;
+    let baseline_version = baseline_review_version(prior.as_ref(), &current_version);
+    let stale_flag = current_version != baseline_version;
+    let dirty_flag = stale_flag
+        && review_item
+            .as_ref()
+            .and_then(|item| item.claimed_at)
+            .map(|claimed_at| latest_reviewable_change_at > claimed_at)
+            .unwrap_or(false);
+    let next = compute_review_gate_state(
+        packet_id,
+        &baseline_version,
+        &validation,
+        &diff_states,
+        &evidence_states,
+        stale_flag,
+        dirty_flag,
+    );
+    if let Some(prior_state) = prior {
+        if review_gate_state_matches(&prior_state, &next) {
+            return Ok(prior_state);
+        }
+    }
+    db.save_review_gate_state(&next)?;
+    Ok(next)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,6 +507,73 @@ fn approve_gate_blocked_message(
     }
 }
 
+fn required_stage_payload(
+    row: Option<(String, DateTime<Utc>)>,
+    stage: &str,
+    packet_id: &PacketId,
+) -> Result<(String, DateTime<Utc>), PipelineError> {
+    row.ok_or_else(|| PipelineError::NotFound(format!("{stage} {} not found", packet_id.0)))
+}
+
+fn latest_reviewable_change_at(
+    db: &Database,
+    packet_id: &PacketId,
+) -> Result<DateTime<Utc>, PipelineError> {
+    let (_, packet_updated_at) = required_stage_payload(
+        db.load_cloud_packet_payload_with_updated_at(packet_id)?,
+        "packet",
+        packet_id,
+    )?;
+    let (_, result_updated_at) = required_stage_payload(
+        db.load_cloud_result_payload_with_updated_at(packet_id)?,
+        "result",
+        packet_id,
+    )?;
+    let (_, validation_updated_at) = required_stage_payload(
+        db.load_validation_payload_with_updated_at(packet_id)?,
+        "validation",
+        packet_id,
+    )?;
+    let lineage_updated_at = db
+        .load_packet_lineage(packet_id)?
+        .ok_or_else(|| PipelineError::NotFound(format!("lineage {} not found", packet_id.0)))?
+        .updated_at;
+    Ok([
+        packet_updated_at,
+        result_updated_at,
+        validation_updated_at,
+        lineage_updated_at,
+    ]
+    .into_iter()
+    .max()
+    .expect("reviewable timestamps must not be empty"))
+}
+
+fn baseline_review_version(prior: Option<&ReviewGateState>, current_version: &str) -> String {
+    match prior {
+        Some(state) if state.packet_version.starts_with("ver_") => state.packet_version.clone(),
+        Some(_) | None => current_version.to_string(),
+    }
+}
+
+fn review_gate_state_matches(left: &ReviewGateState, right: &ReviewGateState) -> bool {
+    left.packet_id == right.packet_id
+        && left.packet_version == right.packet_version
+        && left.required_fields_loaded == right.required_fields_loaded
+        && left.validation_status == right.validation_status
+        && left.blocker_count == right.blocker_count
+        && left.diff_reviewed == right.diff_reviewed
+        && left.evidence_reviewed == right.evidence_reviewed
+        && left.stale_flag == right.stale_flag
+        && left.dirty_flag == right.dirty_flag
+        && left.active_diff_target_id == right.active_diff_target_id
+        && left.active_evidence_id == right.active_evidence_id
+        && left.active_validation_issue_id == right.active_validation_issue_id
+        && left.approve_enabled == right.approve_enabled
+        && left.reject_enabled == right.reject_enabled
+        && left.rework_enabled == right.rework_enabled
+}
+
 pub fn compute_review_gate_state(
     packet_id: &PacketId,
     packet_version_value: &str,
@@ -539,10 +672,17 @@ pub fn blocking_issues(validation: &ValidationReport) -> Vec<ValidationIssue> {
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+    use std::time::Duration;
+
     use chrono::Utc;
 
     use super::*;
-    use crate::model::{DocumentId, ReviewQueueItem};
+    use crate::cleanroom::Cleanroom;
+    use crate::cloud::MockCloudSummarizer;
+    use crate::metadata::RuleBasedMetadata;
+    use crate::model::{DocumentId, PacketId, RawDocument, ReviewQueueItem, SourceKind};
+    use crate::preflight::RuleBasedPreflight;
 
     fn sample_review_item(status: QueueStatus, assigned_reviewer: Option<&str>) -> ReviewQueueItem {
         let now = Utc::now();
@@ -563,7 +703,7 @@ mod tests {
     fn sample_gate() -> ReviewGateState {
         ReviewGateState {
             packet_id: PacketId("pkt_review_policy".to_string()),
-            packet_version: "version_for_pkt_review_policy".to_string(),
+            packet_version: "ver_review_policy".to_string(),
             required_fields_loaded: true,
             validation_status: "pass".to_string(),
             blocker_count: 0,
@@ -673,5 +813,134 @@ mod tests {
             primary_disabled_reason(&policy, Some(&review_item)),
             "Claim this packet before approving, rejecting, or requesting rework."
         );
+    }
+
+    #[test]
+    fn derived_review_version_is_stable_and_changes_with_reviewable_inputs() {
+        let mut cleanroom = Cleanroom::open(
+            ":memory:",
+            RuleBasedPreflight,
+            MockCloudSummarizer,
+            RuleBasedMetadata,
+        )
+        .unwrap();
+        let packet_id = build_pending_packet(&mut cleanroom);
+
+        let initial = derive_review_version(&cleanroom.db, &packet_id).unwrap();
+        let repeated = derive_review_version(&cleanroom.db, &packet_id).unwrap();
+        assert_eq!(initial, repeated);
+        assert!(initial.starts_with("ver_"));
+
+        mutate_validation(&mut cleanroom.db, &packet_id);
+        let after_validation = derive_review_version(&cleanroom.db, &packet_id).unwrap();
+        assert_ne!(initial, after_validation);
+
+        mutate_result(&mut cleanroom.db, &packet_id);
+        let after_result = derive_review_version(&cleanroom.db, &packet_id).unwrap();
+        assert_ne!(after_validation, after_result);
+
+        mutate_packet(&mut cleanroom.db, &packet_id);
+        let after_packet = derive_review_version(&cleanroom.db, &packet_id).unwrap();
+        assert_ne!(after_result, after_packet);
+
+        mutate_lineage(&mut cleanroom.db, &packet_id);
+        let after_lineage = derive_review_version(&cleanroom.db, &packet_id).unwrap();
+        assert_ne!(after_packet, after_lineage);
+    }
+
+    #[test]
+    fn refresh_review_gate_state_derives_stale_from_baseline_mismatch() {
+        let mut cleanroom = Cleanroom::open(
+            ":memory:",
+            RuleBasedPreflight,
+            MockCloudSummarizer,
+            RuleBasedMetadata,
+        )
+        .unwrap();
+        let packet_id = build_pending_packet(&mut cleanroom);
+
+        let initial = refresh_review_gate_state(&mut cleanroom.db, &packet_id).unwrap();
+        assert!(!initial.stale_flag);
+        assert!(!initial.dirty_flag);
+
+        mutate_validation(&mut cleanroom.db, &packet_id);
+        let refreshed = refresh_review_gate_state(&mut cleanroom.db, &packet_id).unwrap();
+        assert!(refreshed.stale_flag);
+        assert!(!refreshed.dirty_flag);
+        assert_eq!(refreshed.packet_version, initial.packet_version);
+    }
+
+    #[test]
+    fn refresh_review_gate_state_derives_dirty_only_after_claim_time() {
+        let mut cleanroom = Cleanroom::open(
+            ":memory:",
+            RuleBasedPreflight,
+            MockCloudSummarizer,
+            RuleBasedMetadata,
+        )
+        .unwrap();
+        let packet_id = build_pending_packet(&mut cleanroom);
+        let _ = refresh_review_gate_state(&mut cleanroom.db, &packet_id).unwrap();
+        cleanroom.claim_next_review("ace").unwrap().unwrap();
+
+        mutate_validation(&mut cleanroom.db, &packet_id);
+        let refreshed = refresh_review_gate_state(&mut cleanroom.db, &packet_id).unwrap();
+        assert!(refreshed.stale_flag);
+        assert!(refreshed.dirty_flag);
+    }
+
+    fn build_pending_packet(
+        cleanroom: &mut Cleanroom<RuleBasedPreflight, MockCloudSummarizer, RuleBasedMetadata>,
+    ) -> PacketId {
+        let packet_id = cleanroom
+            .ingest_and_stage(RawDocument::new(
+                "review drift doc",
+                SourceKind::Document,
+                None,
+                format!("Intro.\n\n{}\n\nTODO: clarify.", "Dense text. ".repeat(100)),
+            ))
+            .unwrap();
+        cleanroom.run_cloud(&packet_id).unwrap();
+        packet_id
+    }
+
+    fn mutate_packet(db: &mut Database, packet_id: &PacketId) {
+        let mut packet = db.load_packet(packet_id).unwrap().unwrap();
+        thread::sleep(Duration::from_millis(2));
+        packet.style_contract.push_str(" Updated.");
+        db.save_packet(&packet).unwrap();
+    }
+
+    fn mutate_result(db: &mut Database, packet_id: &PacketId) {
+        let packet = db.load_packet(packet_id).unwrap().unwrap();
+        let mut result = db.load_result(packet_id).unwrap().unwrap();
+        thread::sleep(Duration::from_millis(2));
+        result.fragments[0]
+            .unresolved_questions
+            .push("new unresolved question".to_string());
+        db.save_result(&packet.document_id, &result).unwrap();
+    }
+
+    fn mutate_validation(db: &mut Database, packet_id: &PacketId) {
+        let packet = db.load_packet(packet_id).unwrap().unwrap();
+        let mut validation = db.load_validation(packet_id).unwrap().unwrap();
+        thread::sleep(Duration::from_millis(2));
+        validation.issues.push(crate::model::ValidationIssue {
+            issue_id: format!("issue_drift_{}", packet_id.0),
+            severity: crate::model::ValidationSeverity::Warning,
+            blocking: false,
+            target_id: Some(packet.packet_id.0.clone()),
+            message: "non-blocking validation drift".to_string(),
+        });
+        db.save_validation(&packet.document_id, &validation)
+            .unwrap();
+    }
+
+    fn mutate_lineage(db: &mut Database, packet_id: &PacketId) {
+        let successor = PacketId::new(&format!("{}-successor", packet_id.0));
+        thread::sleep(Duration::from_millis(2));
+        db.ensure_packet_lineage(&successor).unwrap();
+        db.link_packet_successor(packet_id, &successor, None)
+            .unwrap();
     }
 }

@@ -3,16 +3,15 @@ use crate::error::PipelineError;
 use crate::metadata::{promote_to_wiki, MetadataEngine};
 use crate::model::{
     ApprovedPacket, PacketId, QueueStatus, RawDocument, ReplayBundle, ReviewArtifact,
-    ReviewDecision, ReviewDiffState, ReviewEvidenceState, ReviewGateState, ReviewQueueItem,
-    ValidationReport, WikiNode,
+    ReviewDecision, ReviewDiffState, ReviewEvidenceState, ReviewQueueItem, WikiNode,
 };
 use crate::packetizer::{PacketBuilder, PacketBuilderConfig};
 use crate::parser::Parser;
 use crate::preflight::LocalMarkerModel;
 use crate::review::{
-    blocking_issues, compute_review_gate_state, mark_all_diff_states_reviewed,
-    mark_all_evidence_states_reviewed, packet_version, review_precondition_error,
-    validate_claim_action, validate_terminal_submission, ReviewActionKind, Reviewer,
+    blocking_issues, mark_all_diff_states_reviewed, mark_all_evidence_states_reviewed,
+    refresh_review_gate_state, review_precondition_error, validate_claim_action,
+    validate_terminal_submission, ReviewActionKind, Reviewer,
 };
 use crate::storage::Database;
 use crate::validation::Validator;
@@ -119,16 +118,7 @@ where
             for evidence_state in build_initial_evidence_states(&packet, &result)? {
                 self.db.save_review_evidence_state(&evidence_state)?;
             }
-            let gate_state = compute_review_gate_state(
-                &packet.packet_id,
-                &packet_version(&packet.packet_id),
-                &validation,
-                &self.db.load_review_diff_states(&packet.packet_id)?,
-                &self.db.load_review_evidence_states(&packet.packet_id)?,
-                false,
-                false,
-            );
-            self.db.save_review_gate_state(&gate_state)?;
+            let _ = refresh_review_gate_state(&mut self.db, &packet.packet_id)?;
             Ok(())
         } else {
             Err(PipelineError::Validation(format!(
@@ -184,7 +174,7 @@ where
         let review_item = self.db.load_review_item(packet_id)?.ok_or_else(|| {
             PipelineError::NotFound(format!("review item {} not found", packet_id.0))
         })?;
-        let gate_state = resolve_gate_snapshot(&mut self.db, packet_id, &validation)?;
+        let gate_state = refresh_review_gate_state(&mut self.db, packet_id)?;
         let reviewer = review_item.assigned_reviewer.clone().ok_or_else(|| {
             PipelineError::Review(format!(
                 "packet {} has no assigned reviewer in review state",
@@ -207,7 +197,7 @@ where
         let review_artifact = ReviewArtifact {
             review_id: approved.stamp.review_id.clone(),
             packet_id: packet_id.clone(),
-            packet_version: packet_version(packet_id),
+            packet_version: gate_state.packet_version.clone(),
             reviewer: reviewer.clone(),
             decision: ReviewDecision::Approve,
             notes: notes.to_string(),
@@ -236,7 +226,7 @@ where
         let validation = self.db.load_validation(packet_id)?.ok_or_else(|| {
             PipelineError::NotFound(format!("validation {} not found", packet_id.0))
         })?;
-        let gate_state = resolve_gate_snapshot(&mut self.db, packet_id, &validation)?;
+        let gate_state = refresh_review_gate_state(&mut self.db, packet_id)?;
         let reviewer = review_item.assigned_reviewer.clone().ok_or_else(|| {
             PipelineError::Review(format!(
                 "packet {} has no assigned reviewer in review state",
@@ -256,7 +246,7 @@ where
         self.db.save_review_artifact(&ReviewArtifact {
             review_id: stamp.review_id.clone(),
             packet_id: packet_id.clone(),
-            packet_version: packet_version(packet_id),
+            packet_version: gate_state.packet_version.clone(),
             reviewer,
             decision: ReviewDecision::Reject,
             notes: notes.to_string(),
@@ -283,7 +273,7 @@ where
         let validation = self.db.load_validation(packet_id)?.ok_or_else(|| {
             PipelineError::NotFound(format!("validation {} not found", packet_id.0))
         })?;
-        let gate_state = resolve_gate_snapshot(&mut self.db, packet_id, &validation)?;
+        let gate_state = refresh_review_gate_state(&mut self.db, packet_id)?;
         let reviewer = review_item.assigned_reviewer.clone().ok_or_else(|| {
             PipelineError::Review(format!(
                 "packet {} has no assigned reviewer in review state",
@@ -303,7 +293,7 @@ where
         self.db.save_review_artifact(&ReviewArtifact {
             review_id: stamp.review_id.clone(),
             packet_id: packet_id.clone(),
-            packet_version: packet_version(packet_id),
+            packet_version: gate_state.packet_version.clone(),
             reviewer,
             decision: ReviewDecision::Rework,
             notes: notes.to_string(),
@@ -384,36 +374,6 @@ fn build_initial_evidence_states(
     Ok(evidence_states)
 }
 
-fn resolve_gate_snapshot(
-    db: &mut Database,
-    packet_id: &PacketId,
-    validation: &ValidationReport,
-) -> Result<ReviewGateState, PipelineError> {
-    let packet = db
-        .load_packet(packet_id)?
-        .ok_or_else(|| PipelineError::NotFound(format!("packet {} not found", packet_id.0)))?;
-    let diff_states = db.load_review_diff_states(packet_id)?;
-    let evidence_states = db.load_review_evidence_states(packet_id)?;
-    let prior = db.load_review_gate_state(packet_id)?;
-    let gate_state = compute_review_gate_state(
-        &packet.packet_id,
-        &packet_version(&packet.packet_id),
-        validation,
-        &diff_states,
-        &evidence_states,
-        prior
-            .as_ref()
-            .map(|state| state.stale_flag)
-            .unwrap_or(false),
-        prior
-            .as_ref()
-            .map(|state| state.dirty_flag)
-            .unwrap_or(false),
-    );
-    db.save_review_gate_state(&gate_state)?;
-    Ok(gate_state)
-}
-
 fn acknowledge_claimed_packet_review(
     db: &mut Database,
     packet_id: &PacketId,
@@ -433,15 +393,15 @@ fn acknowledge_claimed_packet_review(
         db.save_review_evidence_state(state)?;
     }
 
-    let validation = db
-        .load_validation(packet_id)?
-        .ok_or_else(|| PipelineError::NotFound(format!("validation {} not found", packet_id.0)))?;
-    let _ = resolve_gate_snapshot(db, packet_id, &validation)?;
+    let _ = refresh_review_gate_state(db, packet_id)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+    use std::time::Duration;
+
     use super::*;
     use crate::cloud::{CloudExecution, CloudSummarizer, MockCloudSummarizer};
     use crate::metadata::RuleBasedMetadata;
@@ -666,7 +626,7 @@ mod tests {
         )
         .unwrap();
         let packet_id = build_claimed_packet(&mut cleanroom);
-        mark_packet_stale(&mut cleanroom.db, &packet_id);
+        inject_nonblocking_validation_drift(&mut cleanroom.db, &packet_id);
 
         let err = cleanroom
             .approve_packet(&packet_id, Some("looks fine"))
@@ -742,6 +702,61 @@ mod tests {
     }
 
     #[test]
+    fn freshly_queued_packet_starts_not_stale_or_dirty() {
+        let mut cleanroom = Cleanroom::open(
+            ":memory:",
+            RuleBasedPreflight,
+            MockCloudSummarizer,
+            RuleBasedMetadata,
+        )
+        .unwrap();
+        let packet_id = build_pending_packet(&mut cleanroom);
+
+        let gate = refresh_review_gate_state(&mut cleanroom.db, &packet_id).unwrap();
+
+        assert!(!gate.stale_flag);
+        assert!(!gate.dirty_flag);
+    }
+
+    #[test]
+    fn validation_drift_before_claim_is_stale_but_not_dirty() {
+        let mut cleanroom = Cleanroom::open(
+            ":memory:",
+            RuleBasedPreflight,
+            MockCloudSummarizer,
+            RuleBasedMetadata,
+        )
+        .unwrap();
+        let packet_id = build_pending_packet(&mut cleanroom);
+
+        inject_nonblocking_validation_drift(&mut cleanroom.db, &packet_id);
+        let gate = refresh_review_gate_state(&mut cleanroom.db, &packet_id).unwrap();
+
+        assert!(gate.stale_flag);
+        assert!(!gate.dirty_flag);
+        assert!(!gate.approve_enabled);
+    }
+
+    #[test]
+    fn validation_drift_after_claim_is_stale_and_dirty() {
+        let mut cleanroom = Cleanroom::open(
+            ":memory:",
+            RuleBasedPreflight,
+            MockCloudSummarizer,
+            RuleBasedMetadata,
+        )
+        .unwrap();
+        let packet_id = build_claimed_packet(&mut cleanroom);
+
+        inject_nonblocking_validation_drift(&mut cleanroom.db, &packet_id);
+        let gate = refresh_review_gate_state(&mut cleanroom.db, &packet_id).unwrap();
+
+        assert!(gate.stale_flag);
+        assert!(gate.dirty_flag);
+        assert!(!gate.approve_enabled);
+    }
+
+    #[test]
     fn cloud_failures_are_persisted_and_do_not_queue_review() {
         let mut cleanroom = Cleanroom::open(
             ":memory:",
@@ -777,6 +792,14 @@ mod tests {
     fn build_claimed_packet(
         cleanroom: &mut Cleanroom<RuleBasedPreflight, MockCloudSummarizer, RuleBasedMetadata>,
     ) -> PacketId {
+        let packet_id = build_pending_packet(cleanroom);
+        cleanroom.claim_next_review("ace").unwrap().unwrap();
+        packet_id
+    }
+
+    fn build_pending_packet(
+        cleanroom: &mut Cleanroom<RuleBasedPreflight, MockCloudSummarizer, RuleBasedMetadata>,
+    ) -> PacketId {
         let packet_id = cleanroom
             .ingest_and_stage(RawDocument::new(
                 "doc",
@@ -786,15 +809,22 @@ mod tests {
             ))
             .unwrap();
         cleanroom.run_cloud(&packet_id).unwrap();
-        cleanroom.claim_next_review("ace").unwrap().unwrap();
         packet_id
     }
 
-    fn mark_packet_stale(db: &mut Database, packet_id: &PacketId) {
-        let mut gate_state = db.load_review_gate_state(packet_id).unwrap().unwrap();
-        gate_state.stale_flag = true;
-        gate_state.approve_enabled = false;
-        db.save_review_gate_state(&gate_state).unwrap();
+    fn inject_nonblocking_validation_drift(db: &mut Database, packet_id: &PacketId) {
+        let packet = db.load_packet(packet_id).unwrap().unwrap();
+        let mut validation = db.load_validation(packet_id).unwrap().unwrap();
+        thread::sleep(Duration::from_millis(2));
+        validation.issues.push(ValidationIssue {
+            issue_id: format!("issue_drift_{}", packet_id.0),
+            severity: ValidationSeverity::Warning,
+            blocking: false,
+            target_id: Some(packet.packet_id.0.clone()),
+            message: "non-blocking validation drift for stale/dirty derivation".to_string(),
+        });
+        db.save_validation(&packet.document_id, &validation)
+            .unwrap();
     }
 
     fn inject_blocking_validation_issue(db: &mut Database, packet_id: &PacketId) {

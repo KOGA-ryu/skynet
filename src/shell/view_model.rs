@@ -419,11 +419,11 @@ mod tests {
     fn fixture_and_storage_serialization_share_identical_key_sets() {
         let db_path = temp_db_path("view_model_contract");
         let _packet_id = build_reviewable_db(&db_path);
-        let db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
+        let mut db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
 
         let fixture = fixture_runtime_view(env!("CARGO_PKG_VERSION"));
         let storage = storage_runtime_view(
-            &db,
+            &mut db,
             env!("CARGO_PKG_VERSION"),
             reviewer_identity(),
             None,

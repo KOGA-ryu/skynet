@@ -10,7 +10,7 @@ implementation packet should reference a phase and milestone from
 
 ### Current Phase
 
-Phase 4: Review Queue and Cleanroom Actions
+Phase 7: Metadata and Subject Linking
 
 ### Current Milestone
 
@@ -38,7 +38,6 @@ Milestone 1: One packet enters, one clean node exits
 
 - Packet versioning semantics for rework attempts.
 - Post-approval metadata richness and relationship edge taxonomy.
-- Real stale/dirty derivation beyond the current persisted gate inputs.
 
 ### Risks
 
@@ -49,12 +48,11 @@ Milestone 1: One packet enters, one clean node exits
 
 ### Next Cuts
 
-1. Keep stale/dirty as explicit persisted inputs until a dedicated derivation
-   packet is ready.
-2. Preserve one backend gate engine while the shell continues to render its
-   truth.
-3. Keep the storage-backed packet lifecycle stable while work shifts to later
-   operator-shell and metadata work.
+1. Expand post-approval metadata and subject-link generation beyond the current
+   rule-based baseline.
+2. Lock packet versioning semantics for rework attempts now that stale/dirty
+   truth is derived.
+3. Start the revisitability packet with trail summaries and resume points.
 
 ## Milestone Status
 
@@ -149,7 +147,7 @@ Status: in progress
 
 ### Phase 4: Review Queue and Cleanroom Actions
 
-Status: in progress
+Status: complete enough for post-approval work
 
 - [x] claim flow
 - [x] approve action
@@ -161,12 +159,12 @@ Status: in progress
 
 ### Phase 5: Shell UI Skeleton
 
-Status: in progress
+Status: complete enough for review-shell work
 
 - [x] panel doctrine reflected in fixture types
 - [x] fake packet fixtures
 - [x] shell layout runtime
-- [ ] splitter behavior
+- [x] splitter behavior
 - [x] review action bar
 
 ### Phases 6-8

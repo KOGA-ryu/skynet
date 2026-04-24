@@ -26,6 +26,8 @@ ApplicationWindow {
         leftRailCollapsed: shellSession.leftRailCollapsed
         rightInspectorCollapsed: shellSession.rightInspectorCollapsed
         bottomStripCollapsed: shellSession.bottomStripCollapsed
+        availableContentWidth: mainRow.width
+        availableContentHeight: workspaceColumn.height
     }
 
     Rectangle {
@@ -55,50 +57,188 @@ ApplicationWindow {
             tabs: root.model?.tabs ?? {}
         }
 
-        RowLayout {
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 12
 
-            LeftControlRail {
-                Layout.preferredWidth: geometry.leftRailWidth
-                Layout.fillHeight: true
-                pane: root.model?.left_rail ?? {}
-                collapsed: shellSession.leftRailCollapsed
-                toggleCollapse: function() { shellSession.toggleLeftRailCollapsed() }
-                activePacketId: root.model?.active_packet_id ?? ""
-                requestedPacketId: shellSession.requestedPacketId
-                selectPacket: function(packetId) { shellSession.selectPacket(packetId) }
+            ColumnLayout {
+                id: workspaceColumn
+
+                anchors.fill: parent
+                spacing: 0
+
+                RowLayout {
+                    id: mainRow
+
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 0
+
+                    LeftControlRail {
+                        Layout.preferredWidth: geometry.leftRailWidth
+                        Layout.minimumWidth: shellSession.leftRailCollapsed
+                            ? geometry.leftRailCollapsedWidth
+                            : geometry.leftRailMinWidth
+                        Layout.fillHeight: true
+                        pane: root.model?.left_rail ?? {}
+                        collapsed: shellSession.leftRailCollapsed
+                        toggleCollapse: function() { shellSession.toggleLeftRailCollapsed() }
+                        activePacketId: root.model?.active_packet_id ?? ""
+                        requestedPacketId: shellSession.requestedPacketId
+                        selectPacket: function(packetId) { shellSession.selectPacket(packetId) }
+                    }
+
+                    Rectangle {
+                        id: leftSplitter
+
+                        visible: !shellSession.leftRailCollapsed
+                        Layout.preferredWidth: visible ? geometry.splitterThickness : 0
+                        Layout.fillHeight: true
+                        color: leftHandle.pressed || leftHandle.containsMouse ? "#243646" : "transparent"
+
+                        property real startX: 0
+                        property int startWidth: 0
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 2
+                            height: parent.height - 28
+                            radius: 1
+                            color: leftHandle.pressed || leftHandle.containsMouse ? "#d8b78a" : "#36414b"
+                        }
+
+                        MouseArea {
+                            id: leftHandle
+
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.SizeHorCursor
+                            onPressed: {
+                                leftSplitter.startX = mouse.x
+                                leftSplitter.startWidth = geometry.leftRailWidth
+                            }
+                            onPositionChanged: if (pressed) {
+                                geometry.setLeftRailWidth(
+                                    leftSplitter.startWidth + mouse.x - leftSplitter.startX
+                                )
+                            }
+                            onDoubleClicked: geometry.resetLeftRailWidth()
+                        }
+                    }
+
+                    CenterPacketPane {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.minimumWidth: geometry.centerMinWidth
+                        pane: root.model?.center_surface ?? {}
+                    }
+
+                    Rectangle {
+                        id: rightSplitter
+
+                        visible: !shellSession.rightInspectorCollapsed
+                        Layout.preferredWidth: visible ? geometry.splitterThickness : 0
+                        Layout.fillHeight: true
+                        color: rightHandle.pressed || rightHandle.containsMouse ? "#243646" : "transparent"
+
+                        property real startX: 0
+                        property int startWidth: 0
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 2
+                            height: parent.height - 28
+                            radius: 1
+                            color: rightHandle.pressed || rightHandle.containsMouse ? "#d8b78a" : "#36414b"
+                        }
+
+                        MouseArea {
+                            id: rightHandle
+
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.SizeHorCursor
+                            onPressed: {
+                                rightSplitter.startX = mouse.x
+                                rightSplitter.startWidth = geometry.rightInspectorWidth
+                            }
+                            onPositionChanged: if (pressed) {
+                                geometry.setRightInspectorWidth(
+                                    rightSplitter.startWidth - (mouse.x - rightSplitter.startX)
+                                )
+                            }
+                            onDoubleClicked: geometry.resetRightInspectorWidth()
+                        }
+                    }
+
+                    RightInspectorPane {
+                        Layout.preferredWidth: geometry.rightInspectorWidth
+                        Layout.minimumWidth: shellSession.rightInspectorCollapsed
+                            ? geometry.rightInspectorCollapsedWidth
+                            : geometry.rightInspectorMinWidth
+                        Layout.fillHeight: true
+                        pane: root.model?.right_inspector ?? {}
+                        collapsed: shellSession.rightInspectorCollapsed
+                        toggleCollapse: function() { shellSession.toggleRightInspectorCollapsed() }
+                        gate: root.model?.gate ?? {}
+                        pendingAction: shellSession.pendingAction
+                        actionErrorMessage: shellSession.actionErrorMessage
+                        claimPacket: function() { shellSession.claimPacket() }
+                        approvePacket: function() { shellSession.approvePacket() }
+                        rejectPacket: function() { shellSession.rejectPacket() }
+                        reworkPacket: function() { shellSession.reworkPacket() }
+                    }
+                }
+
+                Rectangle {
+                    id: bottomSplitter
+
+                    visible: !shellSession.bottomStripCollapsed
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? geometry.splitterThickness : 0
+                    color: bottomHandle.pressed || bottomHandle.containsMouse ? "#243646" : "transparent"
+
+                    property real startY: 0
+                    property int startHeight: 0
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: parent.width - 40
+                        height: 2
+                        radius: 1
+                        color: bottomHandle.pressed || bottomHandle.containsMouse ? "#d8b78a" : "#36414b"
+                    }
+
+                    MouseArea {
+                        id: bottomHandle
+
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.SizeVerCursor
+                        onPressed: {
+                            bottomSplitter.startY = mouse.y
+                            bottomSplitter.startHeight = geometry.bottomStripHeight
+                        }
+                        onPositionChanged: if (pressed) {
+                            geometry.setBottomStripHeight(
+                                bottomSplitter.startHeight - (mouse.y - bottomSplitter.startY)
+                            )
+                        }
+                        onDoubleClicked: geometry.resetBottomStripHeight()
+                    }
+                }
+
+                BottomBlotterPane {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: geometry.bottomStripHeight
+                    Layout.minimumHeight: shellSession.bottomStripCollapsed
+                        ? geometry.bottomStripCollapsedHeight
+                        : geometry.bottomStripMinHeight
+                    pane: root.model?.bottom_strip ?? {}
+                    collapsed: shellSession.bottomStripCollapsed
+                    toggleCollapse: function() { shellSession.toggleBottomStripCollapsed() }
+                }
             }
-
-            CenterPacketPane {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                pane: root.model?.center_surface ?? {}
-            }
-
-            RightInspectorPane {
-                Layout.preferredWidth: geometry.rightInspectorWidth
-                Layout.fillHeight: true
-                pane: root.model?.right_inspector ?? {}
-                collapsed: shellSession.rightInspectorCollapsed
-                toggleCollapse: function() { shellSession.toggleRightInspectorCollapsed() }
-                gate: root.model?.gate ?? {}
-                pendingAction: shellSession.pendingAction
-                actionErrorMessage: shellSession.actionErrorMessage
-                claimPacket: function() { shellSession.claimPacket() }
-                approvePacket: function() { shellSession.approvePacket() }
-                rejectPacket: function() { shellSession.rejectPacket() }
-                reworkPacket: function() { shellSession.reworkPacket() }
-            }
-        }
-
-        BottomBlotterPane {
-            Layout.fillWidth: true
-            Layout.preferredHeight: geometry.bottomStripHeight
-            pane: root.model?.bottom_strip ?? {}
-            collapsed: shellSession.bottomStripCollapsed
-            toggleCollapse: function() { shellSession.toggleBottomStripCollapsed() }
         }
     }
 
