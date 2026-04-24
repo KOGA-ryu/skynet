@@ -67,6 +67,26 @@ The checked-in manifest now matches the current live Codex environment binding.
 If the environment changes later, update `config/codex_cloud_env.json` and
 `CODEX_CLOUD_ENV_ID` together before running the live proof again.
 
+## Codex Cloud Probe
+
+Use the probe binary when you want the same Codex worker and preflight path
+without running the full cleanroom review flow. It prints a JSON report with
+the cloud-run status, task id, artifact paths, and command-trace summaries,
+and exits nonzero on failure.
+
+```bash
+cd ~/dev/skynet
+CODEX_CLOUD_ENV_ID=6940d1f248c48191af000707ccee3b05 cargo run --bin codex_cloud_probe -- --attempt-index 1
+```
+
+This probe still enforces the same preflight truth as the live proof:
+
+- tracked `config/codex_cloud_env.json`
+- exact `environment_id` match
+- clean git worktree
+- allowed fetch remote binding
+- pushed `HEAD`
+
 ## First Local Build
 
 Build the derived catalog from the mounted NAS wiki:
