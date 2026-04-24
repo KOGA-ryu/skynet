@@ -10,7 +10,7 @@ implementation packet should reference a phase and milestone from
 
 ### Current Phase
 
-Phase 3: Real cloud worker integration
+Phase 4: Review Queue and Cleanroom Actions
 
 ### Current Milestone
 
@@ -36,7 +36,6 @@ Milestone 1: One packet enters, one clean node exits
 
 ### Open Decisions
 
-- Shell-driven review proof in a live operator session.
 - Exact review gate predicates for approve beyond the current packet/validation
   truth.
 - Packet versioning semantics for rework attempts.
@@ -51,18 +50,17 @@ Milestone 1: One packet enters, one clean node exits
 
 ### Next Cuts
 
-1. Prove the shell-driven review path in a live operator run.
-2. Tighten any remaining gate-policy gaps exposed by the shell walkthrough
+1. Tighten any remaining gate-policy gaps exposed by the shell walkthrough
    without hiding state.
-3. Lock remaining review semantics into a dedicated review-gate contract.
-4. Keep the storage-backed packet lifecycle stable while work shifts to the
+2. Lock remaining review semantics into a dedicated review-gate contract.
+3. Keep the storage-backed packet lifecycle stable while work shifts to the
    operator shell.
 
 ## Milestone Status
 
 ### Milestone 1: One Packet Enters, One Clean Node Exits
 
-Status: backend proof complete; shell-driven review proof pending
+Status: complete
 
 Proof status:
 
@@ -75,7 +73,7 @@ Proof status:
 - [x] review decision stored
 - [x] wiki node stored
 - [x] replay bundle works
-- [ ] shell-driven review proof
+- [x] shell-driven review proof
 
 ### Milestone 2: Real Review Shell
 

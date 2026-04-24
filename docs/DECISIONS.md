@@ -55,3 +55,36 @@ Downstream consequences:
 - `.cleanroom/` becomes a first-class local artifact area
 - environment ID and CLI auth become operator prerequisites
 - task resolution remains dependent on documented list/poll/apply flows
+
+## 2026-04-24 — Packet Claim Acknowledges Visible Review Surface
+
+Status: accepted
+
+Reason:
+
+The live shell proof exposed a mismatch between the visible operator workflow
+and the persisted gate state. A reviewer could claim a packet in the shell, but
+the backend still left the gate at `needs_review`, which meant approve could
+never become available through the real UI.
+
+Decision:
+
+Claiming a packet in the storage-backed shell now records acknowledgement of the
+currently visible diff and evidence review surface for the claiming reviewer and
+recomputes the persisted gate state. This keeps the live shell path aligned
+with the explicit workflow used in Milestone 1: claim -> inspect visible review
+surface -> approve.
+
+Alternatives rejected:
+
+- Require a separate hidden or future-only acknowledgement control before
+  approve.
+- Leave the shell blocked and treat approve as unreachable in the live path.
+
+Downstream consequences:
+
+- The shell claim action now has meaningful review-state side effects, not just
+  queue assignment.
+- Gate state remains Rust-backed and persists immediately after claim.
+- Future stricter review policy must be mirrored explicitly in both the backend
+  gate contract and the shell surfaces.

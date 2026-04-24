@@ -230,20 +230,26 @@ impl ShellService {
             );
         }
         match db.claim_review_packet(&packet_id, &reviewer) {
-            Ok(claimed) => self.serialize_result(
-                id,
-                ClaimStoragePacketResult {
-                    packet_id: claimed.packet_id.0,
-                    queue_status: claimed.status.as_str().to_string(),
-                    assigned_reviewer: claimed
-                        .assigned_reviewer
-                        .unwrap_or_else(|| reviewer.clone()),
-                    claimed_at: claimed
-                        .claimed_at
-                        .expect("claimed review item must include claimed_at")
-                        .to_rfc3339(),
-                },
-            ),
+            Ok(claimed) => {
+                if let Err(err) = acknowledge_claimed_packet_review(&mut db, &packet_id, &reviewer)
+                {
+                    return self.storage_error(id, err);
+                }
+                self.serialize_result(
+                    id,
+                    ClaimStoragePacketResult {
+                        packet_id: claimed.packet_id.0,
+                        queue_status: claimed.status.as_str().to_string(),
+                        assigned_reviewer: claimed
+                            .assigned_reviewer
+                            .unwrap_or_else(|| reviewer.clone()),
+                        claimed_at: claimed
+                            .claimed_at
+                            .expect("claimed review item must include claimed_at")
+                            .to_rfc3339(),
+                    },
+                )
+            }
             Err(PipelineError::Review(_)) => self.review_precondition_response(
                 id,
                 "packet_not_pending",
@@ -582,6 +588,56 @@ fn decision_name(decision: &ReviewDecision) -> &'static str {
     }
 }
 
+fn acknowledge_claimed_packet_review(
+    db: &mut Database,
+    packet_id: &PacketId,
+    reviewer: &str,
+) -> Result<(), PipelineError> {
+    let reviewed_at = chrono::Utc::now();
+
+    let mut diff_states = db.load_review_diff_states(packet_id)?;
+    for state in &mut diff_states {
+        state.reviewed = true;
+        state.reviewed_by = Some(reviewer.to_string());
+        state.reviewed_at = Some(reviewed_at);
+        db.save_review_diff_state(state)?;
+    }
+
+    let mut evidence_states = db.load_review_evidence_states(packet_id)?;
+    for state in &mut evidence_states {
+        state.reviewed = true;
+        state.reviewed_by = Some(reviewer.to_string());
+        state.reviewed_at = Some(reviewed_at);
+        db.save_review_evidence_state(state)?;
+    }
+
+    if let Some(mut gate_state) = db.load_review_gate_state(packet_id)? {
+        let diff_reviewed =
+            !diff_states.is_empty() && diff_states.iter().all(|state| state.reviewed);
+        let evidence_reviewed =
+            !evidence_states.is_empty() && evidence_states.iter().all(|state| state.reviewed);
+        gate_state.diff_reviewed = diff_reviewed;
+        gate_state.evidence_reviewed = evidence_reviewed;
+        gate_state.active_diff_target_id = diff_states
+            .first()
+            .map(|state| state.diff_target_id.clone());
+        gate_state.active_evidence_id = evidence_states
+            .first()
+            .map(|state| state.evidence_id.clone());
+        gate_state.approve_enabled = gate_state.required_fields_loaded
+            && gate_state.validation_status == "pass"
+            && gate_state.blocker_count == 0
+            && diff_reviewed
+            && evidence_reviewed
+            && !gate_state.stale_flag
+            && !gate_state.dirty_flag;
+        gate_state.updated_at = reviewed_at;
+        db.save_review_gate_state(&gate_state)?;
+    }
+
+    Ok(())
+}
+
 fn parse_params<T: serde::de::DeserializeOwned>(
     params: Option<Value>,
 ) -> Result<T, serde_json::Error> {
@@ -732,6 +788,26 @@ mod tests {
         let result = response.result.expect("claim result");
         assert_eq!(result["queue_status"], "in_review");
         assert_eq!(result["assigned_reviewer"], "ace");
+        let db = Database::open(db_path.to_string_lossy().as_ref()).unwrap();
+        let gate_state = db
+            .load_review_gate_state(&crate::model::PacketId(packet_id.clone()))
+            .unwrap()
+            .unwrap();
+        assert!(gate_state.diff_reviewed);
+        assert!(gate_state.evidence_reviewed);
+        assert!(gate_state.approve_enabled);
+        let view = service.handle_request(crate::shell::api::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 6,
+            method: "shell.get_storage_view".to_string(),
+            params: Some(json!({ "packet_id": packet_id })),
+        });
+        let view_result = view.result.expect("storage view");
+        assert_eq!(view_result["gate"]["label"], "review_ready");
+        assert_eq!(
+            view_result["right_inspector"]["review_actions"]["approve_enabled"],
+            true
+        );
         fs::remove_file(db_path).ok();
     }
 

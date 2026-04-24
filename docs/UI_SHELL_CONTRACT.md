@@ -48,4 +48,7 @@ The repo now contains a live Rust shell runtime under `src/shell/` and a Qt/QML
 host under `qt/`. The current review cut keeps Rust as the source of truth for
 claim/review availability, uses explicit packet claim with session reviewer
 identity from `SKYNET_REVIEWER`, and preserves a session-scoped action receipt
-even after the shell advances to the next packet.
+even after the shell advances to the next packet. A live storage-backed shell
+proof has now exercised the real claim -> approve path and confirmed that the
+shell advances to the next pending packet while keeping the last action receipt
+visible.

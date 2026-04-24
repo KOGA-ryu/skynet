@@ -105,6 +105,59 @@ Interpretation:
 - `cloud_no_diff` means the environment still cannot produce any diff for this
   repo/environment binding
 
+## Shell Review Proof
+
+Use the shell proof seed binary when you want a dedicated storage-backed review
+workspace for the live Qt shell walkthrough. It creates a proof workspace under
+`.cleanroom/shell_proofs/<timestamp>/`, seeds a pending review database using
+the mock-backed cleanroom path, copies that database into the workspace, and
+writes `shell_proof_manifest.json` with the proof DB path, selected packet, and
+screenshot artifact paths.
+
+Seed the proof workspace:
+
+```bash
+cd ~/dev/skynet
+cargo run --bin skynet_shell_proof_seed
+```
+
+If the Qt shell is not already built, build the service binary and Qt app once:
+
+```bash
+cd ~/dev/skynet
+cargo build --bin skynet_shell_service
+cmake -S qt -B /tmp/skynet_qt_build
+cmake --build /tmp/skynet_qt_build --target skynet_qt_shell
+```
+
+Launch the real storage-backed shell against the seeded proof DB using the
+paths printed in `shell_proof_manifest.json`:
+
+```bash
+cd ~/dev/skynet
+export SKYNET_SHELL_DB_PATH=/Users/kogaryu/dev/skynet/.cleanroom/shell_proofs/<timestamp>/shell_proof.db
+export SKYNET_REVIEWER=ace
+export SKYNET_SHELL_SERVICE_PATH=/Users/kogaryu/dev/skynet/target/debug/skynet_shell_service
+/tmp/skynet_qt_build/skynet_qt_shell
+```
+
+Proof walkthrough:
+
+1. confirm the shell opens in storage mode against the proof DB
+2. capture `before_claim.png`
+3. claim the selected pending packet as `ace`
+4. capture `after_claim.png`
+5. approve the claimed packet with a short note or blank approval note
+6. capture `after_approve.png`
+
+Expected proof result:
+
+- the claimed packet becomes `approved`
+- reviewer is `ace`
+- `approved_packets` contains the packet
+- the shell advances to the next pending packet
+- replay for the approved packet shows persisted approval lineage
+
 ## First Local Build
 
 Build the derived catalog from the mounted NAS wiki:
