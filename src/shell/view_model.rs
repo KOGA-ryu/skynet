@@ -1,7 +1,8 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::model::{QueueStatus, ReplayBundle, ReviewQueueItem};
+use crate::model::{ReplayBundle, ReviewQueueItem};
+use crate::review::{primary_disabled_reason, review_action_policy};
 use crate::shell::api::{
     ActionReceiptDto, BottomStripPaneDto, CenterSurfacePaneDto, DiffSummaryDto, EventRowDto,
     EvidenceRowDto, LeftRailPaneDto, PacketSummaryDto, QueueRowDto, ReviewActionsDto,
@@ -56,7 +57,7 @@ pub fn build_shell_view(
         .unwrap_or_else(ShellViewDto::empty_diff_summary);
     let evidence_rows = replay.map(evidence_rows_from_replay).unwrap_or_default();
     let event_rows = replay.map(event_rows_from_replay).unwrap_or_default();
-    let review_actions = review_actions(view_state, &gate, review_item, &reviewer_identity);
+    let review_actions = review_actions(view_state, replay, review_item, &reviewer_identity);
     let component_state = pane_component_state(view_state, &gate);
     let mut dto = ShellViewDto {
         protocol_version: PROTOCOL_VERSION.to_string(),
@@ -214,7 +215,7 @@ fn pane_component_state(view_state: &str, gate: &crate::shell::api::GateDto) -> 
 
 fn review_actions(
     view_state: &str,
-    gate: &crate::shell::api::GateDto,
+    replay: Option<&ReplayBundle>,
     review_item: Option<&ReviewQueueItem>,
     reviewer_identity: &ReviewerIdentityDto,
 ) -> ReviewActionsDto {
@@ -223,104 +224,43 @@ fn review_actions(
         "storage_empty" | "packet_missing" | "service_unavailable" | "invalid_reply"
     ) {
         ShellViewDto::disabled_review_actions()
-    } else if reviewer_identity.status == "missing" {
-        ReviewActionsDto {
-            claim_visible: review_item.is_some(),
-            claim_enabled: false,
-            approve_visible: true,
-            reject_visible: true,
-            rework_visible: true,
-            approve_enabled: false,
-            reject_enabled: false,
-            rework_enabled: false,
-            disabled_reason: REVIEWER_IDENTITY_MISSING_MESSAGE.to_string(),
-        }
     } else {
-        match review_item {
-            Some(item) => review_actions_for_item(item, gate, reviewer_identity),
-            None => ShellViewDto::disabled_review_actions(),
-        }
+        review_actions_for_item(
+            review_item,
+            replay.and_then(|bundle| bundle.gate_state.as_ref()),
+            reviewer_identity,
+        )
     }
 }
 
 fn review_actions_for_item(
-    item: &ReviewQueueItem,
-    gate: &crate::shell::api::GateDto,
+    item: Option<&ReviewQueueItem>,
+    gate_state: Option<&crate::model::ReviewGateState>,
     reviewer_identity: &ReviewerIdentityDto,
 ) -> ReviewActionsDto {
-    let Some(reviewer_name) = reviewer_identity.reviewer_name.as_deref() else {
+    if item.is_none() {
         return ShellViewDto::disabled_review_actions();
-    };
-    match &item.status {
-        QueueStatus::Pending => ReviewActionsDto {
-            claim_visible: true,
-            claim_enabled: true,
-            approve_visible: true,
-            reject_visible: true,
-            rework_visible: true,
-            approve_enabled: false,
-            reject_enabled: false,
-            rework_enabled: false,
-            disabled_reason: "Claim this packet before approving, rejecting, or requesting rework."
-                .to_string(),
+    }
+    let item = item.expect("checked above");
+    let policy = review_action_policy(
+        Some(item),
+        gate_state,
+        reviewer_identity.reviewer_name.as_deref(),
+    );
+    ReviewActionsDto {
+        claim_visible: true,
+        claim_enabled: policy.claim.enabled,
+        approve_visible: true,
+        reject_visible: true,
+        rework_visible: true,
+        approve_enabled: policy.approve.enabled,
+        reject_enabled: policy.reject.enabled,
+        rework_enabled: policy.rework.enabled,
+        disabled_reason: if reviewer_identity.status == "missing" {
+            REVIEWER_IDENTITY_MISSING_MESSAGE.to_string()
+        } else {
+            primary_disabled_reason(&policy, Some(item))
         },
-        QueueStatus::InReview => {
-            let assigned = item.assigned_reviewer.as_deref();
-            if assigned != Some(reviewer_name) {
-                let disabled_reason = assigned
-                    .map(|name| {
-                        format!(
-                            "Claimed by {name}. Only the assigned reviewer can complete review."
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        "Packet is in review but has no assigned reviewer.".to_string()
-                    });
-                ReviewActionsDto {
-                    claim_visible: true,
-                    claim_enabled: false,
-                    approve_visible: true,
-                    reject_visible: true,
-                    rework_visible: true,
-                    approve_enabled: false,
-                    reject_enabled: false,
-                    rework_enabled: false,
-                    disabled_reason,
-                }
-            } else {
-                let approve_enabled = gate.approve_enabled;
-                let reject_enabled = gate.reject_enabled;
-                let rework_enabled = gate.rework_enabled;
-                ReviewActionsDto {
-                    claim_visible: true,
-                    claim_enabled: false,
-                    approve_visible: true,
-                    reject_visible: true,
-                    rework_visible: true,
-                    approve_enabled,
-                    reject_enabled,
-                    rework_enabled,
-                    disabled_reason: if approve_enabled || reject_enabled || rework_enabled {
-                        String::new()
-                    } else {
-                        "Review gate is blocking terminal review actions.".to_string()
-                    },
-                }
-            }
-        }
-        QueueStatus::Approved | QueueStatus::Rejected | QueueStatus::ReworkRequested => {
-            ReviewActionsDto {
-                claim_visible: true,
-                claim_enabled: false,
-                approve_visible: true,
-                reject_visible: true,
-                rework_visible: true,
-                approve_enabled: false,
-                reject_enabled: false,
-                rework_enabled: false,
-                disabled_reason: "Packet review is already complete.".to_string(),
-            }
-        }
     }
 }
 
@@ -719,6 +659,83 @@ mod tests {
                 .disabled_reason,
             crate::shell::api::REVIEWER_IDENTITY_MISSING_MESSAGE
         );
+    }
+
+    #[test]
+    fn blocked_approve_still_allows_reject_and_rework_with_meaningful_reason() {
+        let mut replay = first_vertical_slice_replay_bundle();
+        let gate = replay.gate_state.as_mut().unwrap();
+        gate.approve_enabled = false;
+        gate.reject_enabled = true;
+        gate.rework_enabled = true;
+        gate.stale_flag = true;
+        replay.review_queue_item.as_mut().unwrap().status = QueueStatus::InReview;
+        replay.review_queue_item.as_mut().unwrap().assigned_reviewer = Some("ace".to_string());
+
+        let view = build_shell_view(
+            env!("CARGO_PKG_VERSION"),
+            "fixture",
+            "ready",
+            reviewer_identity(),
+            None,
+            None,
+            Some("pkt_review_001".to_string()),
+            "fixture_default",
+            Vec::new(),
+            Some(&replay),
+            view_error("none", "", false),
+        );
+
+        assert!(!view.right_inspector.review_actions.approve_enabled);
+        assert!(view.right_inspector.review_actions.reject_enabled);
+        assert!(view.right_inspector.review_actions.rework_enabled);
+        assert!(view
+            .right_inspector
+            .review_actions
+            .disabled_reason
+            .contains("marked stale"));
+    }
+
+    #[test]
+    fn gate_labels_follow_persisted_priority_order() {
+        let mut replay = first_vertical_slice_replay_bundle();
+        let gate = replay.gate_state.as_mut().unwrap();
+        gate.approve_enabled = false;
+        gate.required_fields_loaded = true;
+        gate.diff_reviewed = true;
+        gate.evidence_reviewed = true;
+        gate.blocker_count = 2;
+        let blocked = build_shell_view(
+            env!("CARGO_PKG_VERSION"),
+            "fixture",
+            "ready",
+            reviewer_identity(),
+            None,
+            None,
+            Some("pkt_review_001".to_string()),
+            "fixture_default",
+            Vec::new(),
+            Some(&replay),
+            view_error("none", "", false),
+        );
+        assert_eq!(blocked.gate.label, "blocked");
+
+        replay.gate_state.as_mut().unwrap().blocker_count = 0;
+        replay.gate_state.as_mut().unwrap().dirty_flag = true;
+        let dirty = build_shell_view(
+            env!("CARGO_PKG_VERSION"),
+            "fixture",
+            "ready",
+            reviewer_identity(),
+            None,
+            None,
+            Some("pkt_review_001".to_string()),
+            "fixture_default",
+            Vec::new(),
+            Some(&replay),
+            view_error("none", "", false),
+        );
+        assert_eq!(dirty.gate.label, "dirty_blocked");
     }
 
     fn object_keys(value: &Value) -> BTreeSet<String> {

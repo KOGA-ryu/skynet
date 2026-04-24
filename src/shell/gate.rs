@@ -1,20 +1,9 @@
 use crate::model::ReviewGateState;
+use crate::review::review_gate_label;
 use crate::shell::api::GateDto;
 
 pub fn gate_label(persisted: &ReviewGateState) -> String {
-    if persisted.approve_enabled {
-        "review_ready".to_string()
-    } else if persisted.stale_flag {
-        "stale_blocked".to_string()
-    } else if persisted.dirty_flag {
-        "dirty_blocked".to_string()
-    } else if persisted.blocker_count > 0 {
-        "blocked".to_string()
-    } else if !persisted.required_fields_loaded {
-        "loading".to_string()
-    } else {
-        "needs_review".to_string()
-    }
+    review_gate_label(persisted).to_string()
 }
 
 pub fn gate_from_persisted(persisted: &ReviewGateState) -> GateDto {

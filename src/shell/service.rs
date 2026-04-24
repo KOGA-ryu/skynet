@@ -5,10 +5,11 @@ use crate::cleanroom::{review_notes_min_chars, Cleanroom};
 use crate::cloud::MockCloudSummarizer;
 use crate::error::PipelineError;
 use crate::metadata::RuleBasedMetadata;
-use crate::model::{PacketId, QueueStatus, ReviewDecision};
+use crate::model::{PacketId, ReviewDecision};
 use crate::preflight::RuleBasedPreflight;
 use crate::review::{
-    compute_review_gate_state, mark_all_diff_states_reviewed, mark_all_evidence_states_reviewed,
+    precondition_reason_text, validate_claim_action, validate_terminal_submission,
+    ReviewActionKind, ReviewPreconditionKind,
 };
 use crate::shell::api::{
     milestone_capabilities, ActionReceiptDto, ApprovePacketParams, ClaimStoragePacketParams,
@@ -19,7 +20,7 @@ use crate::shell::api::{
     ERROR_CODE_REVIEW_PRECONDITION, ERROR_CODE_SERVICE_NOT_INITIALIZED,
     ERROR_CODE_STORAGE_UNAVAILABLE, ERROR_CODE_UNSUPPORTED_DTO_VERSION,
     ERROR_CODE_UNSUPPORTED_PROTOCOL_VERSION, INTERACTION_MODE_DISPLAY_ONLY, PROTOCOL_VERSION,
-    REVIEWER_IDENTITY_MISSING_MESSAGE, TRANSPORT_NAME,
+    TRANSPORT_NAME,
 };
 use crate::shell::runtime_fixture_app::fixture_runtime_view;
 use crate::shell::runtime_storage_app::storage_runtime_view;
@@ -189,83 +190,70 @@ impl ShellService {
         id: u64,
         params: ClaimStoragePacketParams,
     ) -> JsonRpcResponse {
-        let reviewer = match self.reviewer_name() {
-            Some(reviewer) => reviewer.to_string(),
-            None => {
-                return self.review_precondition_response(
-                    id,
-                    "reviewer_identity_missing",
-                    "Reviewer identity is required for shell review actions.",
-                    json!({
-                        "packet_id": params.packet_id,
-                        "operator_message": REVIEWER_IDENTITY_MISSING_MESSAGE,
-                    }),
-                );
-            }
-        };
         let packet_id = PacketId(params.packet_id);
-        let mut db = match Database::open(&self.storage_path) {
+        let reviewer = self.reviewer_name().map(ToString::to_string);
+        let db = match Database::open(&self.storage_path) {
             Ok(db) => db,
             Err(err) => return self.storage_error(id, err),
         };
         let review_item = match db.load_review_item(&packet_id) {
-            Ok(Some(item)) => item,
-            Ok(None) => {
-                return self.review_precondition_response(
-                    id,
-                    "packet_missing",
-                    "Requested packet is not present in the review queue.",
-                    json!({ "packet_id": packet_id.0 }),
-                );
-            }
+            Ok(item) => item,
             Err(err) => return self.storage_error(id, err),
         };
-        if review_item.status != QueueStatus::Pending {
-            return self.review_precondition_response(
+        if let Err(kind) = validate_claim_action(review_item.as_ref(), reviewer.as_deref()) {
+            return self.review_precondition_response_for_kind(
                 id,
-                "packet_not_pending",
-                "Only pending packets can be claimed.",
-                json!({
-                    "packet_id": packet_id.0,
-                    "queue_status": review_item.status.as_str(),
-                    "assigned_reviewer": review_item.assigned_reviewer,
-                }),
+                kind,
+                &packet_id,
+                review_item.as_ref(),
+                None,
             );
         }
-        match db.claim_review_packet(&packet_id, &reviewer) {
-            Ok(claimed) => {
-                if let Err(err) = acknowledge_claimed_packet_review(&mut db, &packet_id, &reviewer)
-                {
-                    return self.storage_error(id, err);
-                }
-                self.serialize_result(
-                    id,
-                    ClaimStoragePacketResult {
-                        packet_id: claimed.packet_id.0,
-                        queue_status: claimed.status.as_str().to_string(),
-                        assigned_reviewer: claimed
-                            .assigned_reviewer
-                            .unwrap_or_else(|| reviewer.clone()),
-                        claimed_at: claimed
-                            .claimed_at
-                            .expect("claimed review item must include claimed_at")
-                            .to_rfc3339(),
-                    },
-                )
-            }
-            Err(PipelineError::Review(_)) => self.review_precondition_response(
+        let reviewer = reviewer.expect("validated reviewer identity must be present");
+        let mut cleanroom = match self.open_shell_cleanroom() {
+            Ok(cleanroom) => cleanroom,
+            Err(err) => return self.storage_error(id, err),
+        };
+        match cleanroom.claim_review_packet(&packet_id, &reviewer) {
+            Ok(claimed) => self.serialize_result(
                 id,
-                "packet_not_pending",
-                "Only pending packets can be claimed.",
-                json!({ "packet_id": packet_id.0 }),
+                ClaimStoragePacketResult {
+                    packet_id: claimed.packet_id.0,
+                    queue_status: claimed.status.as_str().to_string(),
+                    assigned_reviewer: claimed
+                        .assigned_reviewer
+                        .unwrap_or_else(|| reviewer.clone()),
+                    claimed_at: claimed
+                        .claimed_at
+                        .expect("claimed review item must include claimed_at")
+                        .to_rfc3339(),
+                },
             ),
+            Err(PipelineError::Review(message)) => {
+                if let Some(kind) = ReviewPreconditionKind::from_code(&message) {
+                    self.review_precondition_response_for_kind(
+                        id,
+                        kind,
+                        &packet_id,
+                        review_item.as_ref(),
+                        None,
+                    )
+                } else {
+                    self.storage_error(id, PipelineError::Review(message))
+                }
+            }
             Err(err) => self.storage_error(id, err),
         }
     }
 
     fn handle_approve_packet(&mut self, id: u64, params: ApprovePacketParams) -> JsonRpcResponse {
         let packet_id = PacketId(params.packet_id);
-        if let Err(response) = self.ensure_terminal_action_allowed(id, &packet_id) {
+        if let Err(response) = self.ensure_terminal_action_allowed(
+            id,
+            ReviewActionKind::Approve,
+            &packet_id,
+            params.notes.as_deref(),
+        ) {
             return response;
         }
         let mut cleanroom = match self.open_shell_cleanroom() {
@@ -287,7 +275,12 @@ impl ShellService {
 
     fn handle_reject_packet(&mut self, id: u64, params: RejectPacketParams) -> JsonRpcResponse {
         let packet_id = PacketId(params.packet_id);
-        if let Err(response) = self.ensure_terminal_action_allowed(id, &packet_id) {
+        if let Err(response) = self.ensure_terminal_action_allowed(
+            id,
+            ReviewActionKind::Reject,
+            &packet_id,
+            Some(&params.notes),
+        ) {
             return response;
         }
         let mut cleanroom = match self.open_shell_cleanroom() {
@@ -309,7 +302,12 @@ impl ShellService {
 
     fn handle_rework_packet(&mut self, id: u64, params: ReworkPacketParams) -> JsonRpcResponse {
         let packet_id = PacketId(params.packet_id);
-        if let Err(response) = self.ensure_terminal_action_allowed(id, &packet_id) {
+        if let Err(response) = self.ensure_terminal_action_allowed(
+            id,
+            ReviewActionKind::Rework,
+            &packet_id,
+            Some(&params.notes),
+        ) {
             return response;
         }
         let mut cleanroom = match self.open_shell_cleanroom() {
@@ -348,70 +346,38 @@ impl ShellService {
     fn ensure_terminal_action_allowed(
         &self,
         id: u64,
+        action: ReviewActionKind,
         packet_id: &PacketId,
+        notes: Option<&str>,
     ) -> Result<(), JsonRpcResponse> {
-        let reviewer = match self.reviewer_name() {
-            Some(reviewer) => reviewer,
-            None => {
-                return Err(self.review_precondition_response(
-                    id,
-                    "reviewer_identity_missing",
-                    "Reviewer identity is required for shell review actions.",
-                    json!({
-                        "packet_id": packet_id.0,
-                        "operator_message": REVIEWER_IDENTITY_MISSING_MESSAGE,
-                    }),
-                ));
-            }
-        };
+        let reviewer = self.reviewer_name();
         let db = match Database::open(&self.storage_path) {
             Ok(db) => db,
             Err(err) => return Err(self.storage_error(id, err)),
         };
         let review_item = match db.load_review_item(packet_id) {
-            Ok(Some(item)) => item,
-            Ok(None) => {
-                return Err(self.review_precondition_response(
-                    id,
-                    "packet_missing",
-                    "Requested packet is not present in the review queue.",
-                    json!({ "packet_id": packet_id.0 }),
-                ));
-            }
+            Ok(item) => item,
             Err(err) => return Err(self.storage_error(id, err)),
         };
-        if review_item.status != QueueStatus::InReview {
-            return Err(self.review_precondition_response(
+        let gate_state = match db.load_review_gate_state(packet_id) {
+            Ok(state) => state,
+            Err(err) => return Err(self.storage_error(id, err)),
+        };
+        match validate_terminal_submission(
+            action,
+            review_item.as_ref(),
+            gate_state.as_ref(),
+            reviewer,
+            notes,
+            review_notes_min_chars(),
+        ) {
+            Ok(()) => Ok(()),
+            Err(kind) => Err(self.review_precondition_response_for_kind(
                 id,
-                "packet_not_in_review",
-                "Packet must be in review before it can be completed.",
-                json!({
-                    "packet_id": packet_id.0,
-                    "queue_status": review_item.status.as_str(),
-                    "assigned_reviewer": review_item.assigned_reviewer,
-                }),
-            ));
-        }
-        match review_item.assigned_reviewer.as_deref() {
-            Some(assigned) if assigned == reviewer => Ok(()),
-            Some(assigned) => Err(self.review_precondition_response(
-                id,
-                "claimed_by_other_reviewer",
-                "Packet is claimed by another reviewer.",
-                json!({
-                    "packet_id": packet_id.0,
-                    "assigned_reviewer": assigned,
-                    "reviewer_name": reviewer,
-                }),
-            )),
-            None => Err(self.review_precondition_response(
-                id,
-                "packet_not_in_review",
-                "Packet is missing an assigned reviewer.",
-                json!({
-                    "packet_id": packet_id.0,
-                    "queue_status": review_item.status.as_str(),
-                }),
+                kind,
+                packet_id,
+                review_item.as_ref(),
+                gate_state.as_ref(),
             )),
         }
     }
@@ -451,16 +417,27 @@ impl ShellService {
         err: PipelineError,
     ) -> JsonRpcResponse {
         match err {
-            PipelineError::Review(message) if message.contains("at least") => self
-                .review_precondition_response(
-                    id,
-                    "terminal_note_too_short",
-                    "Terminal review note does not satisfy the note policy.",
-                    json!({
-                        "packet_id": packet_id.0,
-                        "terminal_note_min_chars": review_notes_min_chars(),
-                    }),
-                ),
+            PipelineError::Review(message) => {
+                let review_item = Database::open(&self.storage_path)
+                    .ok()
+                    .and_then(|db| db.load_review_item(packet_id).ok())
+                    .flatten();
+                let gate_state = Database::open(&self.storage_path)
+                    .ok()
+                    .and_then(|db| db.load_review_gate_state(packet_id).ok())
+                    .flatten();
+                if let Some(kind) = ReviewPreconditionKind::from_code(&message) {
+                    self.review_precondition_response_for_kind(
+                        id,
+                        kind,
+                        packet_id,
+                        review_item.as_ref(),
+                        gate_state.as_ref(),
+                    )
+                } else {
+                    self.storage_error(id, PipelineError::Review(message))
+                }
+            }
             PipelineError::NotFound(_) => self.review_precondition_response(
                 id,
                 "packet_missing",
@@ -469,6 +446,63 @@ impl ShellService {
             ),
             other => self.storage_error(id, other),
         }
+    }
+
+    fn review_precondition_response_for_kind(
+        &self,
+        id: u64,
+        kind: ReviewPreconditionKind,
+        packet_id: &PacketId,
+        review_item: Option<&crate::model::ReviewQueueItem>,
+        gate_state: Option<&crate::model::ReviewGateState>,
+    ) -> JsonRpcResponse {
+        let mut details = serde_json::Map::new();
+        details.insert("packet_id".to_string(), Value::String(packet_id.0.clone()));
+        details.insert(
+            "operator_message".to_string(),
+            Value::String(precondition_reason_text(
+                ReviewActionKind::Approve,
+                kind,
+                review_item,
+                gate_state,
+            )),
+        );
+        if let Some(item) = review_item {
+            details.insert(
+                "queue_status".to_string(),
+                Value::String(item.status.as_str().to_string()),
+            );
+            if let Some(assigned) = &item.assigned_reviewer {
+                details.insert(
+                    "assigned_reviewer".to_string(),
+                    Value::String(assigned.clone()),
+                );
+            }
+        }
+        if let Some(reviewer_name) = self.reviewer_name() {
+            details.insert(
+                "reviewer_name".to_string(),
+                Value::String(reviewer_name.to_string()),
+            );
+        }
+        if let Some(gate_state) = gate_state {
+            details.insert(
+                "gate_label".to_string(),
+                Value::String(crate::review::review_gate_label(gate_state).to_string()),
+            );
+        }
+        if kind == ReviewPreconditionKind::TerminalNoteTooShort {
+            details.insert(
+                "terminal_note_min_chars".to_string(),
+                Value::from(review_notes_min_chars()),
+            );
+        }
+        self.review_precondition_response(
+            id,
+            kind.as_str(),
+            &precondition_reason_text(ReviewActionKind::Approve, kind, review_item, gate_state),
+            Value::Object(details),
+        )
     }
 
     fn storage_error(&self, id: u64, err: PipelineError) -> JsonRpcResponse {
@@ -589,44 +623,6 @@ fn decision_name(decision: &ReviewDecision) -> &'static str {
         ReviewDecision::Reject => "reject",
         ReviewDecision::Rework => "rework",
     }
-}
-
-fn acknowledge_claimed_packet_review(
-    db: &mut Database,
-    packet_id: &PacketId,
-    reviewer: &str,
-) -> Result<(), PipelineError> {
-    let reviewed_at = chrono::Utc::now();
-
-    let mut diff_states = db.load_review_diff_states(packet_id)?;
-    mark_all_diff_states_reviewed(&mut diff_states, reviewer, reviewed_at);
-    for state in &diff_states {
-        db.save_review_diff_state(state)?;
-    }
-
-    let mut evidence_states = db.load_review_evidence_states(packet_id)?;
-    mark_all_evidence_states_reviewed(&mut evidence_states, reviewer, reviewed_at);
-    for state in &evidence_states {
-        db.save_review_evidence_state(state)?;
-    }
-
-    if let Some(mut gate_state) = db.load_review_gate_state(packet_id)? {
-        let validation = db.load_validation(packet_id)?.ok_or_else(|| {
-            PipelineError::NotFound(format!("validation {} not found", packet_id.0))
-        })?;
-        gate_state = compute_review_gate_state(
-            packet_id,
-            &gate_state.packet_version,
-            &validation,
-            &diff_states,
-            &evidence_states,
-            gate_state.stale_flag,
-            gate_state.dirty_flag,
-        );
-        db.save_review_gate_state(&gate_state)?;
-    }
-
-    Ok(())
 }
 
 fn parse_params<T: serde::de::DeserializeOwned>(
@@ -888,6 +884,90 @@ mod tests {
         fs::remove_file(db_path).ok();
     }
 
+    #[test]
+    fn approve_returns_structured_gate_block_reason_and_reject_can_still_succeed() {
+        let db_path = temp_db_path("shell_service_gate_block");
+        let packet_id = build_pending_db(&db_path).remove(0);
+        let mut service = ShellService::new(db_path.to_string_lossy().to_string());
+        initialize_with_reviewer(&mut service, Some("ace"));
+        let claim = service.handle_request(crate::shell::api::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 11,
+            method: "shell.claim_storage_packet".to_string(),
+            params: Some(json!({ "packet_id": packet_id })),
+        });
+        assert!(claim.error.is_none());
+        mark_packet_stale(&db_path, &packet_id);
+
+        let approve = service.handle_request(crate::shell::api::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 12,
+            method: "shell.approve_packet".to_string(),
+            params: Some(json!({ "packet_id": packet_id })),
+        });
+        let error = approve.error.expect("approve gate error");
+        assert_eq!(error.data.details["reason_kind"], "approve_gate_blocked");
+        assert_eq!(error.data.details["gate_label"], "stale_blocked");
+
+        let reject = service.handle_request(crate::shell::api::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 13,
+            method: "shell.reject_packet".to_string(),
+            params: Some(json!({
+                "packet_id": packet_id,
+                "notes": "Rejecting this packet because the stale flag still blocks approval.",
+            })),
+        });
+        let result = reject.result.expect("reject result");
+        assert_eq!(result["queue_status"], "rejected");
+        fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn claim_returns_packet_not_pending_and_terminal_notes_are_enforced() {
+        let db_path = temp_db_path("shell_service_precondition_reasons");
+        let packet_id = build_pending_db(&db_path).remove(0);
+
+        let mut service = ShellService::new(db_path.to_string_lossy().to_string());
+        initialize_with_reviewer(&mut service, Some("ace"));
+        let claim = service.handle_request(crate::shell::api::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 14,
+            method: "shell.claim_storage_packet".to_string(),
+            params: Some(json!({ "packet_id": packet_id })),
+        });
+        assert!(claim.error.is_none());
+
+        let second_claim = service.handle_request(crate::shell::api::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 15,
+            method: "shell.claim_storage_packet".to_string(),
+            params: Some(json!({ "packet_id": packet_id })),
+        });
+        let second_claim_error = second_claim.error.expect("claim precondition error");
+        assert_eq!(
+            second_claim_error.data.details["reason_kind"],
+            "packet_not_pending"
+        );
+
+        let short_note = service.handle_request(crate::shell::api::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 16,
+            method: "shell.rework_packet".to_string(),
+            params: Some(json!({
+                "packet_id": packet_id,
+                "notes": "too short",
+            })),
+        });
+        let short_note_error = short_note.error.expect("note policy error");
+        assert_eq!(
+            short_note_error.data.details["reason_kind"],
+            "terminal_note_too_short"
+        );
+        assert_eq!(short_note_error.data.details["terminal_note_min_chars"], 24);
+        fs::remove_file(db_path).ok();
+    }
+
     fn initialize(service: &mut ShellService) -> crate::shell::api::JsonRpcResponse {
         initialize_with_reviewer(service, None)
     }
@@ -955,5 +1035,16 @@ mod tests {
             packet_ids.push(packet_id.0);
         }
         packet_ids
+    }
+
+    fn mark_packet_stale(path: &std::path::Path, packet_id: &str) {
+        let mut db = Database::open(path.to_string_lossy().as_ref()).unwrap();
+        let mut gate_state = db
+            .load_review_gate_state(&crate::model::PacketId(packet_id.to_string()))
+            .unwrap()
+            .unwrap();
+        gate_state.stale_flag = true;
+        gate_state.approve_enabled = false;
+        db.save_review_gate_state(&gate_state).unwrap();
     }
 }

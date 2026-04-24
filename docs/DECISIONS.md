@@ -88,3 +88,33 @@ Downstream consequences:
 - Gate state remains Rust-backed and persists immediately after claim.
 - Future stricter review policy must be mirrored explicitly in both the backend
   gate contract and the shell surfaces.
+
+## 2026-04-24 — Approve Is Strict; Reject And Rework Stay Available When Claimed
+
+Status: accepted
+
+Reason:
+
+Milestone 1 proved the live shell review loop, but the remaining Phase 4 work
+still allowed policy drift between backend mutations and the shell's action
+state. The repo needed one explicit rule for when each review action is allowed.
+
+Decision:
+
+`approve` is the strict action: it requires an `in_review` packet claimed by the
+session reviewer and a persisted gate state with `approve_enabled = true`.
+`reject` and `rework` remain available on a claimed `in_review` packet when the
+required review fields are loaded and note policy passes, even if stale, dirty,
+or blocker state still blocks approval.
+
+Alternatives rejected:
+
+- Block reject and rework behind the same stale/dirty/blocker rules as approve.
+- Keep separate shell-service and cleanroom action checks.
+
+Downstream consequences:
+
+- Backend mutation-time errors use stable review precondition codes.
+- The shell renders backend policy instead of inventing its own action logic.
+- Blocker handling is explicit: blockers block approve, but are preserved on
+  reject and rework artifacts instead of silently preventing those actions.

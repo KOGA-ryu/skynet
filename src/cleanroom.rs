@@ -11,7 +11,8 @@ use crate::parser::Parser;
 use crate::preflight::LocalMarkerModel;
 use crate::review::{
     blocking_issues, compute_review_gate_state, mark_all_diff_states_reviewed,
-    mark_all_evidence_states_reviewed, packet_version, Reviewer,
+    mark_all_evidence_states_reviewed, packet_version, review_precondition_error,
+    validate_claim_action, validate_terminal_submission, ReviewActionKind, Reviewer,
 };
 use crate::storage::Database;
 use crate::validation::Validator;
@@ -141,7 +142,12 @@ where
         &mut self,
         reviewer: &str,
     ) -> Result<Option<ReviewQueueItem>, PipelineError> {
-        self.db.claim_next_review(reviewer)
+        let claimed = self.db.claim_next_review(reviewer)?;
+        if let Some(item) = claimed {
+            acknowledge_claimed_packet_review(&mut self.db, &item.packet_id, reviewer)?;
+            return self.db.load_review_item(&item.packet_id);
+        }
+        Ok(None)
     }
 
     pub fn claim_review_packet(
@@ -149,7 +155,14 @@ where
         packet_id: &PacketId,
         reviewer: &str,
     ) -> Result<ReviewQueueItem, PipelineError> {
-        self.db.claim_review_packet(packet_id, reviewer)
+        let review_item = self.db.load_review_item(packet_id)?.ok_or_else(|| {
+            PipelineError::NotFound(format!("review item {} not found", packet_id.0))
+        })?;
+        validate_claim_action(Some(&review_item), Some(reviewer))
+            .map_err(review_precondition_error)?;
+        let claimed = self.db.claim_review_packet(packet_id, reviewer)?;
+        acknowledge_claimed_packet_review(&mut self.db, packet_id, reviewer)?;
+        Ok(claimed)
     }
 
     pub fn approve_packet(
@@ -171,29 +184,23 @@ where
         let review_item = self.db.load_review_item(packet_id)?.ok_or_else(|| {
             PipelineError::NotFound(format!("review item {} not found", packet_id.0))
         })?;
-        let reviewer = assigned_reviewer_for_review(&review_item, packet_id)?;
+        let gate_state = resolve_gate_snapshot(&mut self.db, packet_id, &validation)?;
+        let reviewer = review_item.assigned_reviewer.clone().ok_or_else(|| {
+            PipelineError::Review(format!(
+                "packet {} has no assigned reviewer in review state",
+                packet_id.0
+            ))
+        })?;
         let notes = notes.unwrap_or("").trim();
-        let mut diff_states = self.db.load_review_diff_states(packet_id)?;
-        let mut evidence_states = self.db.load_review_evidence_states(packet_id)?;
-        let reviewed_at = chrono::Utc::now();
-        mark_all_diff_states_reviewed(&mut diff_states, &reviewer, reviewed_at);
-        mark_all_evidence_states_reviewed(&mut evidence_states, &reviewer, reviewed_at);
-        for diff_state in &diff_states {
-            self.db.save_review_diff_state(diff_state)?;
-        }
-        for evidence_state in &evidence_states {
-            self.db.save_review_evidence_state(evidence_state)?;
-        }
-        let gate_state = compute_review_gate_state(
-            &packet.packet_id,
-            &packet_version(&packet.packet_id),
-            &validation,
-            &diff_states,
-            &evidence_states,
-            false,
-            false,
-        );
-        self.db.save_review_gate_state(&gate_state)?;
+        validate_terminal_submission(
+            ReviewActionKind::Approve,
+            Some(&review_item),
+            Some(&gate_state),
+            Some(&reviewer),
+            Some(notes),
+            REVIEW_NOTES_MIN_CHARS,
+        )
+        .map_err(review_precondition_error)?;
         let review_ready = Reviewer::make_review_ready(packet, result, validation)?;
         let approved = Reviewer::approve(review_ready, reviewer.clone(), notes);
         self.db.save_approved(&approved)?;
@@ -226,12 +233,25 @@ where
         let review_item = self.db.load_review_item(packet_id)?.ok_or_else(|| {
             PipelineError::NotFound(format!("review item {} not found", packet_id.0))
         })?;
-        let reviewer = assigned_reviewer_for_review(&review_item, packet_id)?;
-        ensure_review_notes(notes)?;
         let validation = self.db.load_validation(packet_id)?.ok_or_else(|| {
             PipelineError::NotFound(format!("validation {} not found", packet_id.0))
         })?;
         let gate_state = resolve_gate_snapshot(&mut self.db, packet_id, &validation)?;
+        let reviewer = review_item.assigned_reviewer.clone().ok_or_else(|| {
+            PipelineError::Review(format!(
+                "packet {} has no assigned reviewer in review state",
+                packet_id.0
+            ))
+        })?;
+        validate_terminal_submission(
+            ReviewActionKind::Reject,
+            Some(&review_item),
+            Some(&gate_state),
+            Some(&reviewer),
+            Some(notes),
+            REVIEW_NOTES_MIN_CHARS,
+        )
+        .map_err(review_precondition_error)?;
         let stamp = Reviewer::stamp(packet_id, reviewer.clone(), ReviewDecision::Reject, notes);
         self.db.save_review_artifact(&ReviewArtifact {
             review_id: stamp.review_id.clone(),
@@ -260,12 +280,25 @@ where
         let review_item = self.db.load_review_item(packet_id)?.ok_or_else(|| {
             PipelineError::NotFound(format!("review item {} not found", packet_id.0))
         })?;
-        let reviewer = assigned_reviewer_for_review(&review_item, packet_id)?;
-        ensure_review_notes(notes)?;
         let validation = self.db.load_validation(packet_id)?.ok_or_else(|| {
             PipelineError::NotFound(format!("validation {} not found", packet_id.0))
         })?;
         let gate_state = resolve_gate_snapshot(&mut self.db, packet_id, &validation)?;
+        let reviewer = review_item.assigned_reviewer.clone().ok_or_else(|| {
+            PipelineError::Review(format!(
+                "packet {} has no assigned reviewer in review state",
+                packet_id.0
+            ))
+        })?;
+        validate_terminal_submission(
+            ReviewActionKind::Rework,
+            Some(&review_item),
+            Some(&gate_state),
+            Some(&reviewer),
+            Some(notes),
+            REVIEW_NOTES_MIN_CHARS,
+        )
+        .map_err(review_precondition_error)?;
         let stamp = Reviewer::stamp(packet_id, reviewer.clone(), ReviewDecision::Rework, notes);
         self.db.save_review_artifact(&ReviewArtifact {
             review_id: stamp.review_id.clone(),
@@ -303,35 +336,6 @@ where
 
 pub fn review_notes_min_chars() -> usize {
     REVIEW_NOTES_MIN_CHARS
-}
-
-fn assigned_reviewer_for_review(
-    review_item: &ReviewQueueItem,
-    packet_id: &PacketId,
-) -> Result<String, PipelineError> {
-    if review_item.status != QueueStatus::InReview {
-        return Err(PipelineError::Review(format!(
-            "packet {} is not reviewable from status {}",
-            packet_id.0,
-            review_item.status.as_str()
-        )));
-    }
-    review_item.assigned_reviewer.clone().ok_or_else(|| {
-        PipelineError::Review(format!(
-            "packet {} has no assigned reviewer in review state",
-            packet_id.0
-        ))
-    })
-}
-
-fn ensure_review_notes(notes: &str) -> Result<(), PipelineError> {
-    if notes.trim().chars().count() < REVIEW_NOTES_MIN_CHARS {
-        return Err(PipelineError::Review(format!(
-            "review notes must be at least {} characters for reject/rework",
-            REVIEW_NOTES_MIN_CHARS
-        )));
-    }
-    Ok(())
 }
 
 fn build_initial_diff_states(
@@ -410,12 +414,41 @@ fn resolve_gate_snapshot(
     Ok(gate_state)
 }
 
+fn acknowledge_claimed_packet_review(
+    db: &mut Database,
+    packet_id: &PacketId,
+    reviewer: &str,
+) -> Result<(), PipelineError> {
+    let reviewed_at = chrono::Utc::now();
+
+    let mut diff_states = db.load_review_diff_states(packet_id)?;
+    mark_all_diff_states_reviewed(&mut diff_states, reviewer, reviewed_at);
+    for state in &diff_states {
+        db.save_review_diff_state(state)?;
+    }
+
+    let mut evidence_states = db.load_review_evidence_states(packet_id)?;
+    mark_all_evidence_states_reviewed(&mut evidence_states, reviewer, reviewed_at);
+    for state in &evidence_states {
+        db.save_review_evidence_state(state)?;
+    }
+
+    let validation = db
+        .load_validation(packet_id)?
+        .ok_or_else(|| PipelineError::NotFound(format!("validation {} not found", packet_id.0)))?;
+    let _ = resolve_gate_snapshot(db, packet_id, &validation)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cloud::{CloudExecution, CloudSummarizer, MockCloudSummarizer};
     use crate::metadata::RuleBasedMetadata;
-    use crate::model::{CloudCommandKind, CloudCommandTrace, CloudTaskRun, SourceKind};
+    use crate::model::{
+        CloudCommandKind, CloudCommandTrace, CloudTaskRun, SourceKind, ValidationIssue,
+        ValidationSeverity,
+    };
     use crate::preflight::RuleBasedPreflight;
 
     struct FailingCloudSummarizer;
@@ -624,6 +657,91 @@ mod tests {
     }
 
     #[test]
+    fn approve_fails_when_gate_is_blocked() {
+        let mut cleanroom = Cleanroom::open(
+            ":memory:",
+            RuleBasedPreflight,
+            MockCloudSummarizer,
+            RuleBasedMetadata,
+        )
+        .unwrap();
+        let packet_id = build_claimed_packet(&mut cleanroom);
+        mark_packet_stale(&mut cleanroom.db, &packet_id);
+
+        let err = cleanroom
+            .approve_packet(&packet_id, Some("looks fine"))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            PipelineError::Review(ref code) if code == "approve_gate_blocked"
+        ));
+    }
+
+    #[test]
+    fn reject_and_rework_can_succeed_when_approve_is_blocked() {
+        let mut reject_cleanroom = Cleanroom::open(
+            ":memory:",
+            RuleBasedPreflight,
+            MockCloudSummarizer,
+            RuleBasedMetadata,
+        )
+        .unwrap();
+        let reject_packet_id = build_claimed_packet(&mut reject_cleanroom);
+        inject_blocking_validation_issue(&mut reject_cleanroom.db, &reject_packet_id);
+        let approve_err = reject_cleanroom
+            .approve_packet(&reject_packet_id, Some("still blocked"))
+            .unwrap_err();
+        assert!(matches!(
+            approve_err,
+            PipelineError::Review(ref code) if code == "approve_gate_blocked"
+        ));
+        reject_cleanroom
+            .reject_packet(
+                &reject_packet_id,
+                "Rejecting this packet because the validation blockers remain unresolved.",
+            )
+            .unwrap();
+        let reject_artifact = reject_cleanroom
+            .replay_packet(&reject_packet_id)
+            .unwrap()
+            .review_artifact
+            .unwrap();
+        assert_eq!(reject_artifact.decision, ReviewDecision::Reject);
+        assert_eq!(reject_artifact.blocker_snapshot.len(), 1);
+
+        let mut rework_cleanroom = Cleanroom::open(
+            ":memory:",
+            RuleBasedPreflight,
+            MockCloudSummarizer,
+            RuleBasedMetadata,
+        )
+        .unwrap();
+        let rework_packet_id = build_claimed_packet(&mut rework_cleanroom);
+        inject_blocking_validation_issue(&mut rework_cleanroom.db, &rework_packet_id);
+        let approve_err = rework_cleanroom
+            .approve_packet(&rework_packet_id, Some("still blocked"))
+            .unwrap_err();
+        assert!(matches!(
+            approve_err,
+            PipelineError::Review(ref code) if code == "approve_gate_blocked"
+        ));
+        rework_cleanroom
+            .request_rework(
+                &rework_packet_id,
+                "Rework is required because the validation blockers still need attention.",
+            )
+            .unwrap();
+        let rework_artifact = rework_cleanroom
+            .replay_packet(&rework_packet_id)
+            .unwrap()
+            .review_artifact
+            .unwrap();
+        assert_eq!(rework_artifact.decision, ReviewDecision::Rework);
+        assert_eq!(rework_artifact.blocker_snapshot.len(), 1);
+    }
+
+    #[test]
     fn cloud_failures_are_persisted_and_do_not_queue_review() {
         let mut cleanroom = Cleanroom::open(
             ":memory:",
@@ -654,5 +772,43 @@ mod tests {
             .audit_events
             .iter()
             .any(|event| event.stage == "cloud" && event.action == "cloud_failed"));
+    }
+
+    fn build_claimed_packet(
+        cleanroom: &mut Cleanroom<RuleBasedPreflight, MockCloudSummarizer, RuleBasedMetadata>,
+    ) -> PacketId {
+        let packet_id = cleanroom
+            .ingest_and_stage(RawDocument::new(
+                "doc",
+                SourceKind::Document,
+                None,
+                format!("Intro.\n\n{}\n\nTODO: clarify.", "Dense text. ".repeat(100)),
+            ))
+            .unwrap();
+        cleanroom.run_cloud(&packet_id).unwrap();
+        cleanroom.claim_next_review("ace").unwrap().unwrap();
+        packet_id
+    }
+
+    fn mark_packet_stale(db: &mut Database, packet_id: &PacketId) {
+        let mut gate_state = db.load_review_gate_state(packet_id).unwrap().unwrap();
+        gate_state.stale_flag = true;
+        gate_state.approve_enabled = false;
+        db.save_review_gate_state(&gate_state).unwrap();
+    }
+
+    fn inject_blocking_validation_issue(db: &mut Database, packet_id: &PacketId) {
+        let packet = db.load_packet(packet_id).unwrap().unwrap();
+        let mut validation = db.load_validation(packet_id).unwrap().unwrap();
+        validation.passed = false;
+        validation.issues.push(ValidationIssue {
+            issue_id: "issue_manual_blocker".to_string(),
+            severity: ValidationSeverity::Error,
+            blocking: true,
+            target_id: Some(packet_id.0.clone()),
+            message: "manual blocking issue for policy test".to_string(),
+        });
+        db.save_validation(&packet.document_id, &validation)
+            .unwrap();
     }
 }

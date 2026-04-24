@@ -36,10 +36,9 @@ Milestone 1: One packet enters, one clean node exits
 
 ### Open Decisions
 
-- Exact review gate predicates for approve beyond the current packet/validation
-  truth.
 - Packet versioning semantics for rework attempts.
 - Post-approval metadata richness and relationship edge taxonomy.
+- Real stale/dirty derivation beyond the current persisted gate inputs.
 
 ### Risks
 
@@ -50,11 +49,12 @@ Milestone 1: One packet enters, one clean node exits
 
 ### Next Cuts
 
-1. Tighten any remaining gate-policy gaps exposed by the shell walkthrough
-   without hiding state.
-2. Lock remaining review semantics into a dedicated review-gate contract.
-3. Keep the storage-backed packet lifecycle stable while work shifts to the
-   operator shell.
+1. Keep stale/dirty as explicit persisted inputs until a dedicated derivation
+   packet is ready.
+2. Preserve one backend gate engine while the shell continues to render its
+   truth.
+3. Keep the storage-backed packet lifecycle stable while work shifts to later
+   operator-shell and metadata work.
 
 ## Milestone Status
 
@@ -155,9 +155,9 @@ Status: in progress
 - [x] approve action
 - [x] reject action
 - [x] rework action
-- [ ] gate predicate engine
-- [ ] review note policy enforcement
-- [ ] blocker handling policy
+- [x] gate predicate engine
+- [x] review note policy enforcement
+- [x] blocker handling policy
 
 ### Phase 5: Shell UI Skeleton
 

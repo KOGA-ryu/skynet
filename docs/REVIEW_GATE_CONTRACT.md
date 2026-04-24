@@ -40,15 +40,51 @@ Approve should only be possible when the reviewer can inspect:
 
 - validation failure blocks queue admission
 - queue state transitions are persisted, not implied
+- claiming a packet is allowed only for `pending` packets with reviewer
+  identity present
 - claiming a packet assigns the reviewer and records acknowledgement of the
   currently visible diff/evidence review surface for that reviewer
 - approval writes an `ApprovedPacket`
 - reject and rework persist distinct outcomes
 - promotion requires an approved packet
 
+## Canonical Review Action Policy
+
+### View-Time Policy
+
+- `claim` is enabled only when the packet is `pending` and reviewer identity is
+  present
+- `approve` is enabled only when the packet is `in_review`, claimed by the
+  session reviewer, and persisted gate state has `approve_enabled = true`
+- `reject` and `rework` are enabled only when the packet is `in_review`,
+  claimed by the session reviewer, and persisted gate state has
+  `required_fields_loaded = true`
+- stale, dirty, and blocker state can block `approve`, but do not block
+  `reject` or `rework` in the current policy
+
+### Submit-Time Policy
+
+- `approve` note remains optional
+- `reject` and `rework` require notes meeting the terminal minimum character
+  policy
+- mutation-time failures use stable reason kinds:
+  - `reviewer_identity_missing`
+  - `packet_missing`
+  - `packet_not_pending`
+  - `packet_not_in_review`
+  - `claimed_by_other_reviewer`
+  - `approve_gate_blocked`
+  - `review_fields_not_loaded`
+  - `terminal_note_too_short`
+
+## Current Non-Goals
+
+- stale and dirty remain persisted policy inputs only in this phase
+- real stale/dirty derivation is intentionally deferred
+- no extra shell layout or RPC changes are required for the current gate engine
+
 ## Current Status
 
-The backend and live shell proof now agree on the core operator path:
-claim -> inspect visible review surfaces -> approve. Remaining work is to lock
-the full explicit gate predicate engine and mirror any stricter future policy
-1:1 in the shell.
+The backend and shell now share one explicit review gate engine. Approve is the
+strict action, while reject and rework remain available on claimed packets once
+required fields are loaded and note policy passes.
