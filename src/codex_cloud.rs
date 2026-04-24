@@ -517,10 +517,11 @@ impl CodexCloudWorker {
                         &["cloud".to_string(), "status".to_string(), task.id.clone()],
                     );
                     traces.push(status_capture.trace.clone());
+                    let failure_status = cloud_failure_status(&task.status, &status_capture.trace);
                     return fail_execution(
                         run,
                         traces,
-                        &task.status,
+                        &failure_status,
                         append_status_trace_detail(
                             format!(
                                 "Codex cloud task {} ended with status {}",
@@ -1128,9 +1129,28 @@ fn command_failure_message(message: &str, trace: &CloudCommandTrace) -> String {
 
 fn append_status_trace_detail(base_message: String, trace: &CloudCommandTrace) -> String {
     match status_trace_excerpt(trace) {
+        Some(excerpt) if status_trace_indicates_no_diff(trace) => format!(
+            "{base_message}: {excerpt}. likely cause: the Codex Cloud environment accepted the task but produced no repository diff; verify that this environment is actually bound to the target repo and branch"
+        ),
         Some(excerpt) => format!("{base_message}: {excerpt}"),
         None => base_message,
     }
+}
+
+fn cloud_failure_status(task_status: &str, trace: &CloudCommandTrace) -> String {
+    if status_trace_indicates_no_diff(trace) {
+        "cloud_no_diff".to_string()
+    } else {
+        task_status.to_string()
+    }
+}
+
+fn status_trace_indicates_no_diff(trace: &CloudCommandTrace) -> bool {
+    trace
+        .stdout_summary
+        .as_deref()
+        .map(|stdout| stdout.to_ascii_lowercase().contains("no diff"))
+        .unwrap_or(false)
 }
 
 fn status_trace_excerpt(trace: &CloudCommandTrace) -> Option<String> {
@@ -1845,6 +1865,31 @@ mod tests {
         );
 
         assert!(message.contains("Generate summary JSON from packet"));
+    }
+
+    #[test]
+    fn no_diff_status_is_classified_as_cloud_no_diff() {
+        let trace = CloudCommandTrace {
+            trace_id: "trace_status".to_string(),
+            cloud_run_id: "cloudrun_pkt_inline_attempt_001".to_string(),
+            attempt_index: 1,
+            command_kind: CloudCommandKind::Status,
+            command_text: "codex cloud status task_e_123".to_string(),
+            started_at: Utc::now(),
+            finished_at: Utc::now(),
+            exit_status: Some(1),
+            stdout_summary: Some("[ERROR] Add CLOUD_PROBE_OK to README.md\nuihusk • 55s ago\nno diff".to_string()),
+            stderr_summary: None,
+        };
+
+        let failure_status = cloud_failure_status("error", &trace);
+        let message = append_status_trace_detail(
+            "Codex cloud task task_e_123 ended with status error".to_string(),
+            &trace,
+        );
+
+        assert_eq!(failure_status, "cloud_no_diff");
+        assert!(message.contains("produced no repository diff"));
     }
 
     #[test]
