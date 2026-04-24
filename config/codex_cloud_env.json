@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "environment_id": "env_replace_me",
+  "environment_id": "6940d1f248c48191af000707ccee3b05",
   "environment_label": "suits",
   "allowed_fetch_remote_identities": [
-    "github.com/kogaryu/skynet"
+    "github.com/koga-ryu/skynet"
   ]
 }

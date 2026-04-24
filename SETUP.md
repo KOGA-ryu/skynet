@@ -55,17 +55,17 @@ Tracked manifest shape:
 ```json
 {
   "version": 1,
-  "environment_id": "env_replace_me",
-  "environment_label": "human-readable-name",
+  "environment_id": "6940d1f248c48191af000707ccee3b05",
+  "environment_label": "suits",
   "allowed_fetch_remote_identities": [
-    "github.com/owner/repo"
+    "github.com/koga-ryu/skynet"
   ]
 }
 ```
 
-The checked-in manifest is a placeholder until a real immutable environment id
-and allowed remote are assigned. A live proof is expected to fail closed until
-that binding is real.
+The checked-in manifest now matches the current live Codex environment binding.
+If the environment changes later, update `config/codex_cloud_env.json` and
+`CODEX_CLOUD_ENV_ID` together before running the live proof again.
 
 ## First Local Build
 
