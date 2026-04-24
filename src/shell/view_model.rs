@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::metadata::{primary_subject_label, MetadataEngine, RuleBasedMetadata};
 use crate::model::{ReplayBundle, ReviewQueueItem};
 use crate::review::{primary_disabled_reason, review_action_policy};
 use crate::shell::api::{
@@ -274,11 +275,7 @@ fn packet_summary_from_replay(bundle: &ReplayBundle) -> PacketSummaryDto {
                 .as_ref()
                 .map(|state| state.packet_version.clone())
                 .unwrap_or_default(),
-            subject_label: packet
-                .work_units
-                .first()
-                .map(|work_unit| work_unit.target_node_id.0.clone())
-                .unwrap_or_else(|| packet.packet_id.0.clone()),
+            subject_label: replay_subject_label(bundle, packet),
             title: bundle
                 .raw
                 .as_ref()
@@ -288,6 +285,28 @@ fn packet_summary_from_replay(bundle: &ReplayBundle) -> PacketSummaryDto {
         },
         None => ShellViewDto::empty_packet_summary(),
     }
+}
+
+fn replay_subject_label(bundle: &ReplayBundle, packet: &crate::model::CloudTaskPacket) -> String {
+    if let Some(wiki_node) = bundle.wiki_node.as_ref() {
+        return primary_subject_label(&wiki_node.metadata);
+    }
+    if let Some(approved) = bundle.approved.as_ref() {
+        return primary_subject_label(&RuleBasedMetadata.enrich(approved));
+    }
+    if let Some(result) = bundle.result.as_ref() {
+        if let Some(fragment) = result.fragments.first() {
+            return fragment.summary_title.clone();
+        }
+    }
+    if let Some(raw) = bundle.raw.as_ref() {
+        return raw.title.clone();
+    }
+    packet
+        .work_units
+        .first()
+        .map(|work_unit| work_unit.target_node_id.0.clone())
+        .unwrap_or_else(|| packet.packet_id.0.clone())
 }
 
 fn validation_summary_from_replay(bundle: &ReplayBundle) -> ValidationSummaryDto {
@@ -400,12 +419,13 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use chrono::Utc;
     use serde_json::Value;
 
     use crate::cleanroom::Cleanroom;
     use crate::cloud::MockCloudSummarizer;
     use crate::metadata::RuleBasedMetadata;
-    use crate::model::{QueueStatus, RawDocument, SourceKind};
+    use crate::model::{MetadataRecord, QueueStatus, RawDocument, SourceKind, WikiNode};
     use crate::preflight::RuleBasedPreflight;
     use crate::shell::api::ReviewerIdentityDto;
     use crate::shell::fixtures::first_vertical_slice_replay_bundle;
@@ -694,6 +714,68 @@ mod tests {
             .review_actions
             .disabled_reason
             .contains("marked stale"));
+    }
+
+    #[test]
+    fn packet_summary_prefers_persisted_wiki_metadata_subject_label() {
+        let mut replay = first_vertical_slice_replay_bundle();
+        replay.wiki_node = Some(WikiNode {
+            wiki_node_id: "wiki_pkt_review_001".to_string(),
+            source_document_id: replay.raw.as_ref().unwrap().document_id.clone(),
+            approved_packet_id: replay.packet.as_ref().unwrap().packet_id.clone(),
+            title: "Probability measure summary".to_string(),
+            body: "Body".to_string(),
+            metadata: MetadataRecord {
+                subjects: vec!["mathematics".to_string()],
+                tags: vec!["probability_theory".to_string()],
+                related_subjects: vec![],
+            },
+            source_node_ids: vec![],
+            created_at: Utc::now(),
+        });
+
+        let view = build_shell_view(
+            env!("CARGO_PKG_VERSION"),
+            "fixture",
+            "ready",
+            reviewer_identity(),
+            None,
+            None,
+            Some("pkt_review_001".to_string()),
+            "fixture_default",
+            Vec::new(),
+            Some(&replay),
+            view_error("none", "", false),
+        );
+
+        assert_eq!(
+            view.center_surface.packet_summary.subject_label,
+            "Mathematics"
+        );
+    }
+
+    #[test]
+    fn packet_summary_falls_back_to_summary_title_before_promotion() {
+        let replay = first_vertical_slice_replay_bundle();
+
+        let view = build_shell_view(
+            env!("CARGO_PKG_VERSION"),
+            "fixture",
+            "ready",
+            reviewer_identity(),
+            None,
+            None,
+            Some("pkt_review_001".to_string()),
+            "fixture_default",
+            Vec::new(),
+            Some(&replay),
+            view_error("none", "", false),
+        );
+
+        assert_eq!(
+            view.center_surface.packet_summary.subject_label,
+            "Probability measure summary"
+        );
     }
 
     #[test]

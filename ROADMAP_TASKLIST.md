@@ -38,6 +38,8 @@ Milestone 1: One packet enters, one clean node exits
 
 - Packet versioning semantics for rework attempts.
 - Post-approval metadata richness and relationship edge taxonomy.
+- How revisit trails should summarize packet-to-packet learning without turning
+  into dead logs.
 
 ### Risks
 
@@ -48,10 +50,9 @@ Milestone 1: One packet enters, one clean node exits
 
 ### Next Cuts
 
-1. Expand post-approval metadata and subject-link generation beyond the current
-   rule-based baseline.
-2. Lock packet versioning semantics for rework attempts now that stale/dirty
+1. Lock packet versioning semantics for rework attempts now that stale/dirty
    truth is derived.
+2. Expand metadata relationships beyond the current subject/tag baseline.
 3. Start the revisitability packet with trail summaries and resume points.
 
 ## Milestone Status
@@ -169,8 +170,8 @@ Status: complete enough for review-shell work
 
 ### Phases 6-8
 
-Status: phase 6 in progress, later phases not started
+Status: phase 7 in progress, phase 8 not started
 
 - [x] shell review integration
-- [ ] metadata and subject linking
+- [x] metadata and subject linking baseline
 - [ ] visitable history and learning trails

@@ -118,3 +118,32 @@ Downstream consequences:
 - The shell renders backend policy instead of inventing its own action logic.
 - Blocker handling is explicit: blockers block approve, but are preserved on
   reject and rework artifacts instead of silently preventing those actions.
+
+## 2026-04-24 — Metadata Stays Post-Approval And Drives Human Subject Labels
+
+Status: accepted
+
+Reason:
+
+The repo reached the point where post-approval wiki shaping was the next useful
+surface, but the existing metadata layer was still a thin keyword pass and the
+shell could still display opaque node ids as the packet “subject”.
+
+Decision:
+
+Metadata remains a post-approval concern. The rule-based metadata engine now
+produces canonical subjects, tags, and related subjects for approved work, and
+shell packet summaries prefer persisted wiki metadata, or approved-packet
+metadata preview, when rendering the human subject label.
+
+Alternatives rejected:
+
+- Push metadata inference into pre-approval shell state.
+- Keep shell subject labels tied to raw node identifiers.
+
+Downstream consequences:
+
+- Metadata stays downstream of review and promotion policy.
+- Subject labels in replay and promoted views become more useful to operators.
+- Relationship richness remains open work; this packet establishes only a
+  deterministic baseline.
