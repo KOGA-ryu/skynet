@@ -124,6 +124,19 @@ struct FetchRemoteBinding {
     identity: String,
 }
 
+struct PreparedRun {
+    run: CloudTaskRun,
+    traces: Vec<CloudCommandTrace>,
+    trace_seq: u32,
+    matched_bindings: Vec<FetchRemoteBinding>,
+    containment_stdout: String,
+}
+
+struct AppliedRun {
+    run: CloudTaskRun,
+    traces: Vec<CloudCommandTrace>,
+}
+
 pub struct CodexCloudWorker {
     config: CodexCloudConfig,
 }
@@ -147,10 +160,9 @@ impl CodexCloudWorker {
         packet: &CloudTaskPacket,
         attempt_index: u32,
     ) -> CloudExecution {
-        let submitted_at = Utc::now();
         let artifacts = self.artifacts_for(packet, attempt_index);
-        let mut run = CloudTaskRun {
-            cloud_run_id: cloud_run_id(packet, attempt_index),
+        let run = CloudTaskRun {
+            cloud_run_id: cloud_run_id(&packet.packet_id, attempt_index),
             packet_id: packet.packet_id.clone(),
             attempt_index,
             task_id: None,
@@ -167,197 +179,21 @@ impl CodexCloudWorker {
             output_path: artifacts.output_rel.clone(),
             allowed_apply_paths: vec![artifacts.output_rel.clone()],
             new_apply_paths: vec![],
-            submitted_at,
+            submitted_at: Utc::now(),
             finished_at: None,
             final_status: "submission_started".to_string(),
             error_text: None,
         };
-        let mut traces = Vec::new();
-        let mut trace_seq = 0_u32;
-
-        if !self.ensure_command_success(
-            &mut traces,
-            &mut trace_seq,
-            &mut run,
-            CloudCommandKind::GitCheckoutCheck,
-            "git",
-            &["rev-parse", "--is-inside-work-tree"],
-            "git checkout preflight failed",
-            "git_checkout_check_failed",
-        ) {
-            return cloud_execution(run, traces, None);
-        }
-        let manifest = match self.load_env_manifest() {
-            Ok(manifest) => manifest,
-            Err((status, message)) => return fail_execution(run, traces, &status, message),
+        let prepared = match self.prepare_run(run) {
+            Ok(prepared) => prepared,
+            Err(execution) => return execution,
         };
-        if self.config.env_id != manifest.environment_id {
-            return fail_execution(
-                run,
-                traces,
-                "environment_id_mismatch",
-                environment_id_mismatch_message(&self.config.env_id, &manifest),
-            );
-        }
-        let worktree_capture = self.run_command_capture(
-            &run,
-            &mut trace_seq,
-            CloudCommandKind::GitWorktreeCheck,
-            "git",
-            &[
-                "status".to_string(),
-                "--porcelain".to_string(),
-                "--branch".to_string(),
-            ],
-        );
-        traces.push(worktree_capture.trace.clone());
-        if !worktree_capture.success {
-            return fail_execution_from_trace(
-                run,
-                traces,
-                "git_worktree_check_failed",
-                "git status failed during worktree preflight",
-                &worktree_capture.trace,
-            );
-        }
-        run.current_branch = parse_current_branch(&worktree_capture.stdout);
-        if worktree_is_dirty(&worktree_capture.stdout) {
-            let message = dirty_worktree_message(run.current_branch.as_deref());
-            return fail_execution(run, traces, "git_worktree_dirty", message);
-        }
-        let remote_capture = self.run_command_capture(
-            &run,
-            &mut trace_seq,
-            CloudCommandKind::GitRemoteCheck,
-            "git",
-            &["remote".to_string(), "-v".to_string()],
-        );
-        traces.push(remote_capture.trace.clone());
-        if !remote_capture.success {
-            return fail_execution_from_trace(
-                run,
-                traces,
-                "git_remote_check_failed",
-                "git remote -v failed during repo binding preflight",
-                &remote_capture.trace,
-            );
-        }
-        let fetch_bindings = parse_fetch_remote_bindings(&remote_capture.stdout);
-        if fetch_bindings.is_empty() {
-            return fail_execution(
-                run,
-                traces,
-                "git_remote_missing",
-                format!(
-                    "no fetch remotes were configured; add an allowed fetch remote listed in {}",
-                    ENV_MANIFEST_REL_PATH
-                ),
-            );
-        }
-        let matched_bindings = matching_fetch_remote_bindings(
-            &fetch_bindings,
-            &manifest.allowed_fetch_remote_identities,
-        );
-        if matched_bindings.is_empty() {
-            return fail_execution(
-                run,
-                traces,
-                "git_remote_mismatch",
-                format!(
-                    "no fetch remote matched allowed identities in {}: found {}",
-                    ENV_MANIFEST_REL_PATH,
-                    render_fetch_remote_identities(&fetch_bindings)
-                ),
-            );
-        }
-        run.matched_remote_identity = Some(matched_bindings[0].identity.clone());
-        let head_capture = self.run_command_capture(
-            &run,
-            &mut trace_seq,
-            CloudCommandKind::GitHeadCheck,
-            "git",
-            &["rev-parse".to_string(), "HEAD".to_string()],
-        );
-        traces.push(head_capture.trace.clone());
-        if !head_capture.success {
-            return fail_execution_from_trace(
-                run,
-                traces,
-                "git_head_check_failed",
-                "git rev-parse HEAD failed during repo binding preflight",
-                &head_capture.trace,
-            );
-        }
-        let current_head_sha = match parse_head_sha(&head_capture.stdout) {
-            Some(current_head_sha) => current_head_sha,
-            None => {
-                return fail_execution(
-                    run,
-                    traces,
-                    "git_head_check_failed",
-                    "git rev-parse HEAD returned no commit sha".to_string(),
-                );
-            }
-        };
-        run.current_head_sha = Some(current_head_sha.clone());
-        let containment_capture = self.run_command_capture(
-            &run,
-            &mut trace_seq,
-            CloudCommandKind::GitRemoteContainmentCheck,
-            "git",
-            &[
-                "branch".to_string(),
-                "-r".to_string(),
-                "--contains".to_string(),
-                current_head_sha.clone(),
-            ],
-        );
-        traces.push(containment_capture.trace.clone());
-        if !containment_capture.success {
-            return fail_execution_from_trace(
-                run,
-                traces,
-                "git_remote_containment_check_failed",
-                "git branch -r --contains HEAD failed during repo binding preflight",
-                &containment_capture.trace,
-            );
-        }
-        let matched_remote_names = matched_bindings
-            .iter()
-            .map(|binding| binding.remote_name.as_str())
-            .collect::<Vec<_>>();
-        let head_contained = head_is_contained_in_allowed_remote_ref(
-            &containment_capture.stdout,
-            &matched_remote_names,
-        );
-        run.head_contained_in_allowed_remote_ref = Some(head_contained);
-        if !head_contained {
-            let matched_remote_identity = run
-                .matched_remote_identity
-                .clone()
-                .unwrap_or_else(|| "<unknown remote>".to_string());
-            return fail_execution(
-                run,
-                traces,
-                "git_head_unpushed",
-                format!(
-                    "HEAD {} is not contained in any allowed remote ref for {}",
-                    current_head_sha, matched_remote_identity
-                ),
-            );
-        }
-        if !self.ensure_command_success(
-            &mut traces,
-            &mut trace_seq,
-            &mut run,
-            CloudCommandKind::LoginStatus,
-            "codex",
-            &["login", "status"],
-            "codex CLI is not authenticated",
-            "login_status_failed",
-        ) {
-            return cloud_execution(run, traces, None);
-        }
+        let PreparedRun {
+            run,
+            traces,
+            trace_seq,
+            ..
+        } = prepared;
         if let Err(error) = self.write_packet(packet, &artifacts.packet_path) {
             return fail_execution(
                 run,
@@ -387,221 +223,11 @@ impl CodexCloudWorker {
             }
         };
         let prompt = self.build_prompt(packet, &artifacts.output_rel, &packet_json);
-        let attempts = self.config.attempts.to_string();
-        let exec_capture = self.run_command_capture(
-            &run,
-            &mut trace_seq,
-            CloudCommandKind::Exec,
-            "codex",
-            &[
-                "cloud".to_string(),
-                "exec".to_string(),
-                "--env".to_string(),
-                self.config.env_id.clone(),
-                "--attempts".to_string(),
-                attempts,
-                prompt,
-            ],
-        );
-        traces.push(exec_capture.trace.clone());
-        if !exec_capture.success {
-            return fail_execution_from_trace(
-                run,
-                traces,
-                "exec_failed",
-                "codex cloud exec failed",
-                &exec_capture.trace,
-            );
-        }
-
-        match extract_task_from_exec_stdout(&exec_capture.stdout) {
-            Some(resolved) => {
-                run.task_id = Some(resolved.task_id);
-                run.task_url = resolved.task_url;
-                run.resolution_method = resolved.resolution_method;
-            }
-            None => {
-                let resolution =
-                    self.resolve_recent_task(&run, &mut traces, &mut trace_seq, submitted_at);
-                let resolved = match resolution {
-                    Ok(resolved) => resolved,
-                    Err((status, message)) => return fail_execution(run, traces, &status, message),
-                };
-                run.task_id = Some(resolved.task_id);
-                run.task_url = resolved.task_url;
-                run.resolution_method = resolved.resolution_method;
-            }
-        }
-
-        let task_id = match run.task_id.clone() {
-            Some(task_id) => task_id,
-            None => {
-                return fail_execution(
-                    run,
-                    traces,
-                    "task_resolution_failed",
-                    "cloud task id was not resolved".to_string(),
-                )
-            }
+        let applied = match self.execute_cloud_apply_cycle(run, traces, trace_seq, prompt, None) {
+            Ok(applied) => applied,
+            Err(execution) => return execution,
         };
-
-        let started = Instant::now();
-        loop {
-            if started.elapsed() > self.config.timeout {
-                return fail_execution(
-                    run,
-                    traces,
-                    "timeout",
-                    format!("timed out waiting for Codex cloud task {task_id}"),
-                );
-            }
-
-            let list_capture = self.run_command_capture(
-                &run,
-                &mut trace_seq,
-                CloudCommandKind::List,
-                "codex",
-                &[
-                    "cloud".to_string(),
-                    "list".to_string(),
-                    "--env".to_string(),
-                    self.config.env_id.clone(),
-                    "--limit".to_string(),
-                    MAX_LIST_LIMIT.to_string(),
-                    "--json".to_string(),
-                ],
-            );
-            traces.push(list_capture.trace.clone());
-            if !list_capture.success {
-                return fail_execution_from_trace(
-                    run,
-                    traces,
-                    "list_failed",
-                    "codex cloud list failed while polling",
-                    &list_capture.trace,
-                );
-            }
-
-            let listing = match parse_list_response(&list_capture.stdout) {
-                Ok(listing) => listing,
-                Err(message) => return fail_execution(run, traces, "list_parse_failed", message),
-            };
-            let task = listing
-                .tasks
-                .into_iter()
-                .find(|candidate| candidate.id == task_id);
-            let Some(task) = task else {
-                thread::sleep(self.config.poll_interval);
-                continue;
-            };
-            let status_class = match classify_task_status(&task.status) {
-                Ok(status_class) => status_class,
-                Err(message) => {
-                    return fail_execution(run, traces, "unknown_task_status", message);
-                }
-            };
-            run.task_url = Some(task.url.clone());
-            match status_class {
-                TaskStatusClass::Active => thread::sleep(self.config.poll_interval),
-                TaskStatusClass::Success => {
-                    run.final_status = task.status;
-                    run.finished_at = Some(Utc::now());
-                    break;
-                }
-                TaskStatusClass::Failure => {
-                    let status_capture = self.run_command_capture(
-                        &run,
-                        &mut trace_seq,
-                        CloudCommandKind::Status,
-                        "codex",
-                        &["cloud".to_string(), "status".to_string(), task.id.clone()],
-                    );
-                    traces.push(status_capture.trace.clone());
-                    let failure_status = cloud_failure_status(&task.status, &status_capture.trace);
-                    return fail_execution(
-                        run,
-                        traces,
-                        &failure_status,
-                        append_status_trace_detail(
-                            format!(
-                                "Codex cloud task {} ended with status {}",
-                                task.id, task.status
-                            ),
-                            &status_capture.trace,
-                        ),
-                    );
-                }
-            }
-        }
-
-        let before_apply = self.run_command_capture(
-            &run,
-            &mut trace_seq,
-            CloudCommandKind::GitStatusBeforeApply,
-            "git",
-            &["status".to_string(), "--porcelain".to_string()],
-        );
-        traces.push(before_apply.trace.clone());
-        if !before_apply.success {
-            return fail_execution_from_trace(
-                run,
-                traces,
-                "git_status_before_apply_failed",
-                "git status failed before codex apply",
-                &before_apply.trace,
-            );
-        }
-
-        let apply_capture = self.run_command_capture(
-            &run,
-            &mut trace_seq,
-            CloudCommandKind::Apply,
-            "codex",
-            &["apply".to_string(), task_id.clone()],
-        );
-        traces.push(apply_capture.trace.clone());
-        if !apply_capture.success {
-            return fail_execution_from_trace(
-                run,
-                traces,
-                "apply_failed",
-                "codex apply failed",
-                &apply_capture.trace,
-            );
-        }
-
-        let after_apply = self.run_command_capture(
-            &run,
-            &mut trace_seq,
-            CloudCommandKind::GitStatusAfterApply,
-            "git",
-            &["status".to_string(), "--porcelain".to_string()],
-        );
-        traces.push(after_apply.trace.clone());
-        if !after_apply.success {
-            return fail_execution_from_trace(
-                run,
-                traces,
-                "git_status_after_apply_failed",
-                "git status failed after codex apply",
-                &after_apply.trace,
-            );
-        }
-
-        let new_apply_paths = newly_changed_paths(&before_apply.stdout, &after_apply.stdout);
-        run.new_apply_paths = new_apply_paths.clone();
-        let unexpected_paths = unexpected_apply_paths(&new_apply_paths, &run.allowed_apply_paths);
-        if !unexpected_paths.is_empty() {
-            return fail_execution(
-                run,
-                traces,
-                "apply_dirty_paths_unexpected",
-                format!(
-                    "codex apply introduced unexpected paths: {}",
-                    unexpected_paths.join(", ")
-                ),
-            );
-        }
+        let AppliedRun { run, traces } = applied;
         if !artifacts.output_path.exists() {
             return fail_execution(
                 run,
@@ -643,6 +269,532 @@ impl CodexCloudWorker {
             Ok(result) => cloud_execution(run, traces, Some(result)),
             Err(error) => fail_execution(run, traces, "output_invalid", error),
         }
+    }
+
+    pub fn execute_canary(&self, canary_id: &str, attempt_index: u32) -> CloudExecution {
+        let packet_id = PacketId::new(&format!("codex-canary:{canary_id}"));
+        let output_rel = format!("codex_apply_out/cloud_canary.{canary_id}.txt");
+        let output_path = self.config.repo_root.join(&output_rel);
+        let run = CloudTaskRun {
+            cloud_run_id: cloud_run_id(&packet_id, attempt_index),
+            packet_id,
+            attempt_index,
+            task_id: None,
+            task_url: None,
+            environment_id: Some(self.config.env_id.clone()),
+            matched_remote_identity: None,
+            current_head_sha: None,
+            current_branch: None,
+            head_contained_in_allowed_remote_ref: None,
+            resolution_method: "unresolved".to_string(),
+            handoff_mode: "direct_cli_canary_v1".to_string(),
+            packet_path: "<canary:none>".to_string(),
+            schema_path: "<canary:none>".to_string(),
+            output_path: output_rel.clone(),
+            allowed_apply_paths: vec![output_rel.clone()],
+            new_apply_paths: vec![],
+            submitted_at: Utc::now(),
+            finished_at: None,
+            final_status: "submission_started".to_string(),
+            error_text: None,
+        };
+        let prepared = match self.prepare_run(run) {
+            Ok(prepared) => prepared,
+            Err(execution) => return execution,
+        };
+        let resolved_branch = match derive_canary_branch(
+            prepared.run.current_branch.as_deref(),
+            &prepared.containment_stdout,
+            &prepared.matched_bindings,
+        ) {
+            Some(resolved_branch) => resolved_branch,
+            None => {
+                let refs = allowed_remote_refs(
+                    &prepared.containment_stdout,
+                    &matched_remote_names(&prepared.matched_bindings),
+                );
+                let current_branch = prepared.run.current_branch.clone();
+                return fail_execution(
+                    prepared.run,
+                    prepared.traces,
+                    "canary_branch_unresolved",
+                    canary_branch_unresolved_message(current_branch.as_deref(), &refs),
+                );
+            }
+        };
+        let prompt = self.build_canary_prompt(canary_id, &output_rel);
+        let applied = match self.execute_cloud_apply_cycle(
+            prepared.run,
+            prepared.traces,
+            prepared.trace_seq,
+            prompt,
+            Some(&resolved_branch),
+        ) {
+            Ok(applied) => applied,
+            Err(execution) => return execution,
+        };
+        let AppliedRun { run, traces } = applied;
+        if !output_path.exists() {
+            return fail_execution(
+                run,
+                traces,
+                "canary_output_missing",
+                format!("expected canary artifact {} was not created", output_rel),
+            );
+        }
+        let canary_text = match fs::read_to_string(&output_path) {
+            Ok(canary_text) => canary_text,
+            Err(error) => {
+                return fail_execution(
+                    run,
+                    traces,
+                    "canary_output_read_failed",
+                    format!("failed to read canary artifact {}: {error}", output_rel),
+                );
+            }
+        };
+        let expected_text = format!("CLOUD_CANARY_OK {canary_id}\n");
+        if canary_text != expected_text {
+            return fail_execution(
+                run,
+                traces,
+                "canary_output_mismatch",
+                format!(
+                    "canary artifact {} did not match expected content",
+                    output_rel
+                ),
+            );
+        }
+        cloud_execution(run, traces, None)
+    }
+
+    fn prepare_run(&self, mut run: CloudTaskRun) -> Result<PreparedRun, CloudExecution> {
+        let mut traces = Vec::new();
+        let mut trace_seq = 0_u32;
+
+        if !self.ensure_command_success(
+            &mut traces,
+            &mut trace_seq,
+            &mut run,
+            CloudCommandKind::GitCheckoutCheck,
+            "git",
+            &["rev-parse", "--is-inside-work-tree"],
+            "git checkout preflight failed",
+            "git_checkout_check_failed",
+        ) {
+            return Err(cloud_execution(run, traces, None));
+        }
+        let manifest = match self.load_env_manifest() {
+            Ok(manifest) => manifest,
+            Err((status, message)) => return Err(fail_execution(run, traces, &status, message)),
+        };
+        if self.config.env_id != manifest.environment_id {
+            return Err(fail_execution(
+                run,
+                traces,
+                "environment_id_mismatch",
+                environment_id_mismatch_message(&self.config.env_id, &manifest),
+            ));
+        }
+        let worktree_capture = self.run_command_capture(
+            &run,
+            &mut trace_seq,
+            CloudCommandKind::GitWorktreeCheck,
+            "git",
+            &[
+                "status".to_string(),
+                "--porcelain".to_string(),
+                "--branch".to_string(),
+            ],
+        );
+        traces.push(worktree_capture.trace.clone());
+        if !worktree_capture.success {
+            return Err(fail_execution_from_trace(
+                run,
+                traces,
+                "git_worktree_check_failed",
+                "git status failed during worktree preflight",
+                &worktree_capture.trace,
+            ));
+        }
+        run.current_branch = parse_current_branch(&worktree_capture.stdout);
+        if worktree_is_dirty(&worktree_capture.stdout) {
+            let message = dirty_worktree_message(run.current_branch.as_deref());
+            return Err(fail_execution(run, traces, "git_worktree_dirty", message));
+        }
+        let remote_capture = self.run_command_capture(
+            &run,
+            &mut trace_seq,
+            CloudCommandKind::GitRemoteCheck,
+            "git",
+            &["remote".to_string(), "-v".to_string()],
+        );
+        traces.push(remote_capture.trace.clone());
+        if !remote_capture.success {
+            return Err(fail_execution_from_trace(
+                run,
+                traces,
+                "git_remote_check_failed",
+                "git remote -v failed during repo binding preflight",
+                &remote_capture.trace,
+            ));
+        }
+        let fetch_bindings = parse_fetch_remote_bindings(&remote_capture.stdout);
+        if fetch_bindings.is_empty() {
+            return Err(fail_execution(
+                run,
+                traces,
+                "git_remote_missing",
+                format!(
+                    "no fetch remotes were configured; add an allowed fetch remote listed in {}",
+                    ENV_MANIFEST_REL_PATH
+                ),
+            ));
+        }
+        let matched_bindings = matching_fetch_remote_bindings(
+            &fetch_bindings,
+            &manifest.allowed_fetch_remote_identities,
+        );
+        if matched_bindings.is_empty() {
+            return Err(fail_execution(
+                run,
+                traces,
+                "git_remote_mismatch",
+                format!(
+                    "no fetch remote matched allowed identities in {}: found {}",
+                    ENV_MANIFEST_REL_PATH,
+                    render_fetch_remote_identities(&fetch_bindings)
+                ),
+            ));
+        }
+        run.matched_remote_identity = Some(matched_bindings[0].identity.clone());
+        let head_capture = self.run_command_capture(
+            &run,
+            &mut trace_seq,
+            CloudCommandKind::GitHeadCheck,
+            "git",
+            &["rev-parse".to_string(), "HEAD".to_string()],
+        );
+        traces.push(head_capture.trace.clone());
+        if !head_capture.success {
+            return Err(fail_execution_from_trace(
+                run,
+                traces,
+                "git_head_check_failed",
+                "git rev-parse HEAD failed during repo binding preflight",
+                &head_capture.trace,
+            ));
+        }
+        let current_head_sha = match parse_head_sha(&head_capture.stdout) {
+            Some(current_head_sha) => current_head_sha,
+            None => {
+                return Err(fail_execution(
+                    run,
+                    traces,
+                    "git_head_check_failed",
+                    "git rev-parse HEAD returned no commit sha".to_string(),
+                ));
+            }
+        };
+        run.current_head_sha = Some(current_head_sha.clone());
+        let containment_capture = self.run_command_capture(
+            &run,
+            &mut trace_seq,
+            CloudCommandKind::GitRemoteContainmentCheck,
+            "git",
+            &[
+                "branch".to_string(),
+                "-r".to_string(),
+                "--contains".to_string(),
+                current_head_sha,
+            ],
+        );
+        traces.push(containment_capture.trace.clone());
+        if !containment_capture.success {
+            return Err(fail_execution_from_trace(
+                run,
+                traces,
+                "git_remote_containment_check_failed",
+                "git branch -r --contains HEAD failed during repo binding preflight",
+                &containment_capture.trace,
+            ));
+        }
+        let matched_remote_names = matched_remote_names(&matched_bindings);
+        let head_contained = head_is_contained_in_allowed_remote_ref(
+            &containment_capture.stdout,
+            &matched_remote_names,
+        );
+        run.head_contained_in_allowed_remote_ref = Some(head_contained);
+        if !head_contained {
+            let matched_remote_identity = run
+                .matched_remote_identity
+                .clone()
+                .unwrap_or_else(|| "<unknown remote>".to_string());
+            let current_head_sha = run
+                .current_head_sha
+                .clone()
+                .unwrap_or_else(|| "<unknown head>".to_string());
+            return Err(fail_execution(
+                run,
+                traces,
+                "git_head_unpushed",
+                format!(
+                    "HEAD {} is not contained in any allowed remote ref for {}",
+                    current_head_sha, matched_remote_identity
+                ),
+            ));
+        }
+        if !self.ensure_command_success(
+            &mut traces,
+            &mut trace_seq,
+            &mut run,
+            CloudCommandKind::LoginStatus,
+            "codex",
+            &["login", "status"],
+            "codex CLI is not authenticated",
+            "login_status_failed",
+        ) {
+            return Err(cloud_execution(run, traces, None));
+        }
+        Ok(PreparedRun {
+            run,
+            traces,
+            trace_seq,
+            matched_bindings,
+            containment_stdout: containment_capture.stdout,
+        })
+    }
+
+    fn execute_cloud_apply_cycle(
+        &self,
+        mut run: CloudTaskRun,
+        mut traces: Vec<CloudCommandTrace>,
+        mut trace_seq: u32,
+        prompt: String,
+        branch: Option<&str>,
+    ) -> Result<AppliedRun, CloudExecution> {
+        let attempts = self.config.attempts.to_string();
+        let mut exec_args = vec![
+            "cloud".to_string(),
+            "exec".to_string(),
+            "--env".to_string(),
+            self.config.env_id.clone(),
+        ];
+        if let Some(branch) = branch {
+            exec_args.extend(["--branch".to_string(), branch.to_string()]);
+        }
+        exec_args.extend(["--attempts".to_string(), attempts, prompt]);
+        let exec_capture = self.run_command_capture(
+            &run,
+            &mut trace_seq,
+            CloudCommandKind::Exec,
+            "codex",
+            &exec_args,
+        );
+        traces.push(exec_capture.trace.clone());
+        if !exec_capture.success {
+            return Err(fail_execution_from_trace(
+                run,
+                traces,
+                "exec_failed",
+                "codex cloud exec failed",
+                &exec_capture.trace,
+            ));
+        }
+
+        match extract_task_from_exec_stdout(&exec_capture.stdout) {
+            Some(resolved) => {
+                run.task_id = Some(resolved.task_id);
+                run.task_url = resolved.task_url;
+                run.resolution_method = resolved.resolution_method;
+            }
+            None => {
+                let resolution =
+                    self.resolve_recent_task(&run, &mut traces, &mut trace_seq, run.submitted_at);
+                let resolved = match resolution {
+                    Ok(resolved) => resolved,
+                    Err((status, message)) => {
+                        return Err(fail_execution(run, traces, &status, message));
+                    }
+                };
+                run.task_id = Some(resolved.task_id);
+                run.task_url = resolved.task_url;
+                run.resolution_method = resolved.resolution_method;
+            }
+        }
+
+        let task_id = match run.task_id.clone() {
+            Some(task_id) => task_id,
+            None => {
+                return Err(fail_execution(
+                    run,
+                    traces,
+                    "task_resolution_failed",
+                    "cloud task id was not resolved".to_string(),
+                ));
+            }
+        };
+
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.config.timeout {
+                return Err(fail_execution(
+                    run,
+                    traces,
+                    "timeout",
+                    format!("timed out waiting for Codex cloud task {task_id}"),
+                ));
+            }
+
+            let list_capture = self.run_command_capture(
+                &run,
+                &mut trace_seq,
+                CloudCommandKind::List,
+                "codex",
+                &[
+                    "cloud".to_string(),
+                    "list".to_string(),
+                    "--env".to_string(),
+                    self.config.env_id.clone(),
+                    "--limit".to_string(),
+                    MAX_LIST_LIMIT.to_string(),
+                    "--json".to_string(),
+                ],
+            );
+            traces.push(list_capture.trace.clone());
+            if !list_capture.success {
+                return Err(fail_execution_from_trace(
+                    run,
+                    traces,
+                    "list_failed",
+                    "codex cloud list failed while polling",
+                    &list_capture.trace,
+                ));
+            }
+
+            let listing = match parse_list_response(&list_capture.stdout) {
+                Ok(listing) => listing,
+                Err(message) => {
+                    return Err(fail_execution(run, traces, "list_parse_failed", message));
+                }
+            };
+            let task = listing
+                .tasks
+                .into_iter()
+                .find(|candidate| candidate.id == task_id);
+            let Some(task) = task else {
+                thread::sleep(self.config.poll_interval);
+                continue;
+            };
+            let status_class = match classify_task_status(&task.status) {
+                Ok(status_class) => status_class,
+                Err(message) => {
+                    return Err(fail_execution(run, traces, "unknown_task_status", message));
+                }
+            };
+            run.task_url = Some(task.url.clone());
+            match status_class {
+                TaskStatusClass::Active => thread::sleep(self.config.poll_interval),
+                TaskStatusClass::Success => {
+                    run.final_status = task.status;
+                    run.finished_at = Some(Utc::now());
+                    break;
+                }
+                TaskStatusClass::Failure => {
+                    let status_capture = self.run_command_capture(
+                        &run,
+                        &mut trace_seq,
+                        CloudCommandKind::Status,
+                        "codex",
+                        &["cloud".to_string(), "status".to_string(), task.id.clone()],
+                    );
+                    traces.push(status_capture.trace.clone());
+                    let failure_status = cloud_failure_status(&task.status, &status_capture.trace);
+                    return Err(fail_execution(
+                        run,
+                        traces,
+                        &failure_status,
+                        append_status_trace_detail(
+                            format!(
+                                "Codex cloud task {} ended with status {}",
+                                task.id, task.status
+                            ),
+                            &status_capture.trace,
+                        ),
+                    ));
+                }
+            }
+        }
+
+        let before_apply = self.run_command_capture(
+            &run,
+            &mut trace_seq,
+            CloudCommandKind::GitStatusBeforeApply,
+            "git",
+            &["status".to_string(), "--porcelain".to_string()],
+        );
+        traces.push(before_apply.trace.clone());
+        if !before_apply.success {
+            return Err(fail_execution_from_trace(
+                run,
+                traces,
+                "git_status_before_apply_failed",
+                "git status failed before codex apply",
+                &before_apply.trace,
+            ));
+        }
+
+        let apply_capture = self.run_command_capture(
+            &run,
+            &mut trace_seq,
+            CloudCommandKind::Apply,
+            "codex",
+            &["apply".to_string(), task_id.clone()],
+        );
+        traces.push(apply_capture.trace.clone());
+        if !apply_capture.success {
+            return Err(fail_execution_from_trace(
+                run,
+                traces,
+                "apply_failed",
+                "codex apply failed",
+                &apply_capture.trace,
+            ));
+        }
+
+        let after_apply = self.run_command_capture(
+            &run,
+            &mut trace_seq,
+            CloudCommandKind::GitStatusAfterApply,
+            "git",
+            &["status".to_string(), "--porcelain".to_string()],
+        );
+        traces.push(after_apply.trace.clone());
+        if !after_apply.success {
+            return Err(fail_execution_from_trace(
+                run,
+                traces,
+                "git_status_after_apply_failed",
+                "git status failed after codex apply",
+                &after_apply.trace,
+            ));
+        }
+
+        let new_apply_paths = newly_changed_paths(&before_apply.stdout, &after_apply.stdout);
+        run.new_apply_paths = new_apply_paths.clone();
+        let unexpected_paths = unexpected_apply_paths(&new_apply_paths, &run.allowed_apply_paths);
+        if !unexpected_paths.is_empty() {
+            return Err(fail_execution(
+                run,
+                traces,
+                "apply_dirty_paths_unexpected",
+                format!(
+                    "codex apply introduced unexpected paths: {}",
+                    unexpected_paths.join(", ")
+                ),
+            ));
+        }
+        Ok(AppliedRun { run, traces })
     }
 
     fn ensure_command_success(
@@ -796,6 +948,20 @@ END_CLEANROOM_PACKET_JSON"#,
             output_template,
             work_unit_hints,
             packet_json,
+        )
+    }
+
+    fn build_canary_prompt(&self, canary_id: &str, output_rel: &str) -> String {
+        format!(
+            r#"WRITE_EXACTLY_ONE_FILE: {output_rel}
+WRITE_EXACT_CONTENT: CLOUD_CANARY_OK {canary_id}\n
+Rules:
+- run `mkdir -p codex_apply_out`
+- create or overwrite that file
+- write exactly one line ending with a newline
+- do not modify any other file
+- do not print any prose
+- stop after the file exists"#
         )
     }
 
@@ -1073,8 +1239,8 @@ impl CodexSummaryFile {
     }
 }
 
-fn cloud_run_id(packet: &CloudTaskPacket, attempt_index: u32) -> String {
-    format!("cloudrun_{}_attempt_{attempt_index:03}", packet.packet_id.0)
+fn cloud_run_id(packet_id: &PacketId, attempt_index: u32) -> String {
+    format!("cloudrun_{}_attempt_{attempt_index:03}", packet_id.0)
 }
 
 fn trace_id_for(run: &CloudTaskRun, sequence: u32, kind: &CloudCommandKind) -> String {
@@ -1437,14 +1603,84 @@ fn parse_head_sha(stdout: &str) -> Option<String> {
 }
 
 fn head_is_contained_in_allowed_remote_ref(stdout: &str, allowed_remote_names: &[&str]) -> bool {
-    stdout.lines().any(|line| {
-        let trimmed = line.trim().trim_start_matches('*').trim();
-        if trimmed.is_empty() || trimmed.contains("->") {
-            return false;
+    !allowed_remote_refs(stdout, allowed_remote_names).is_empty()
+}
+
+fn matched_remote_names(bindings: &[FetchRemoteBinding]) -> Vec<&str> {
+    bindings
+        .iter()
+        .map(|binding| binding.remote_name.as_str())
+        .collect()
+}
+
+fn allowed_remote_refs(stdout: &str, allowed_remote_names: &[&str]) -> Vec<String> {
+    let mut refs = stdout
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            if trimmed.is_empty() || trimmed.contains("->") {
+                return None;
+            }
+            let remote_name = trimmed.split('/').next().unwrap_or_default();
+            if allowed_remote_names.contains(&remote_name) {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
+fn derive_canary_branch(
+    current_branch: Option<&str>,
+    containment_output: &str,
+    matched_bindings: &[FetchRemoteBinding],
+) -> Option<String> {
+    let matched_remote_names = matched_remote_names(matched_bindings);
+    let allowed_refs = allowed_remote_refs(containment_output, &matched_remote_names);
+    if let Some(current_branch) = current_branch {
+        let expected_suffix = format!("/{current_branch}");
+        if allowed_refs
+            .iter()
+            .any(|remote_ref| remote_ref.ends_with(&expected_suffix))
+        {
+            return Some(current_branch.to_string());
         }
-        let remote_name = trimmed.split('/').next().unwrap_or_default();
-        allowed_remote_names.contains(&remote_name)
-    })
+    }
+    let mut candidate_branches = allowed_refs
+        .iter()
+        .filter_map(|remote_ref| {
+            remote_ref
+                .split_once('/')
+                .map(|(_, branch)| branch.to_string())
+        })
+        .collect::<Vec<_>>();
+    candidate_branches.sort();
+    candidate_branches.dedup();
+    if candidate_branches.len() == 1 {
+        candidate_branches.pop()
+    } else {
+        None
+    }
+}
+
+fn canary_branch_unresolved_message(
+    current_branch: Option<&str>,
+    allowed_refs: &[String],
+) -> String {
+    let branch_text = current_branch.unwrap_or("<detached>");
+    let refs_text = if allowed_refs.is_empty() {
+        "<none>".to_string()
+    } else {
+        allowed_refs.join(", ")
+    };
+    format!(
+        "could not derive a single cloud branch from current branch {} and allowed remote refs {}",
+        branch_text, refs_text
+    )
 }
 
 fn parse_dirty_paths(status_output: &str) -> Vec<String> {
@@ -1764,7 +2000,7 @@ mod tests {
             completion_contract: "done".to_string(),
         };
         let run = CloudTaskRun {
-            cloud_run_id: cloud_run_id(&packet, 3),
+            cloud_run_id: cloud_run_id(&packet.packet_id, 3),
             packet_id: packet.packet_id.clone(),
             attempt_index: 3,
             task_id: None,
@@ -1837,11 +2073,71 @@ mod tests {
         assert!(prompt.contains("mkdir -p codex_apply_out"));
         assert!(prompt.contains("minimal valid JSON file is better than no diff"));
         assert!(prompt.contains(r#""target_node_id": "node_target""#));
-        assert!(prompt.contains("TARGET_NODE_ID=node_target | ALLOWED_EVIDENCE_NODE_IDS=[node_context, node_target]"));
+        assert!(prompt.contains(
+            "TARGET_NODE_ID=node_target | ALLOWED_EVIDENCE_NODE_IDS=[node_context, node_target]"
+        ));
         assert!(prompt.contains(&packet_json));
         assert!(!prompt.contains("Read the packet at:"));
         assert!(!prompt.contains("schema at:"));
         assert!(prompt.contains(r#""packet_id":"pkt_inline""#));
+    }
+
+    #[test]
+    fn canary_prompt_is_minimal_and_visible() {
+        let config = CodexCloudConfig::new("/tmp/skynet", "env_123");
+        let worker = CodexCloudWorker::new(config).unwrap();
+        let prompt =
+            worker.build_canary_prompt("canary-001", "codex_apply_out/cloud_canary.canary-001.txt");
+
+        assert!(
+            prompt.contains("WRITE_EXACTLY_ONE_FILE: codex_apply_out/cloud_canary.canary-001.txt")
+        );
+        assert!(prompt.contains("WRITE_EXACT_CONTENT: CLOUD_CANARY_OK canary-001\\n"));
+        assert!(prompt.contains("mkdir -p codex_apply_out"));
+        assert!(!prompt.contains("BEGIN_CLEANROOM_PACKET_JSON"));
+        assert!(!prompt.contains("BEGIN_OUTPUT_CONTRACT"));
+        assert!(!prompt.contains("BEGIN_OUTPUT_TEMPLATE"));
+        assert!(!prompt.contains("schema"));
+    }
+
+    #[test]
+    fn canary_branch_prefers_current_branch_when_validated() {
+        let matched_bindings = vec![FetchRemoteBinding {
+            remote_name: "origin".to_string(),
+            identity: "github.com/owner/repo".to_string(),
+        }];
+
+        let branch = derive_canary_branch(Some("master"), "  origin/master\n", &matched_bindings);
+
+        assert_eq!(branch.as_deref(), Some("master"));
+    }
+
+    #[test]
+    fn canary_branch_falls_back_to_single_allowed_remote_ref() {
+        let matched_bindings = vec![FetchRemoteBinding {
+            remote_name: "origin".to_string(),
+            identity: "github.com/owner/repo".to_string(),
+        }];
+
+        let branch = derive_canary_branch(None, "  origin/releases/2026-q2\n", &matched_bindings);
+
+        assert_eq!(branch.as_deref(), Some("releases/2026-q2"));
+    }
+
+    #[test]
+    fn canary_branch_fails_closed_when_allowed_refs_are_ambiguous() {
+        let matched_bindings = vec![FetchRemoteBinding {
+            remote_name: "origin".to_string(),
+            identity: "github.com/owner/repo".to_string(),
+        }];
+
+        let branch = derive_canary_branch(
+            None,
+            "  origin/master\n  origin/release\n",
+            &matched_bindings,
+        );
+
+        assert_eq!(branch, None);
     }
 
     #[test]
@@ -1878,7 +2174,9 @@ mod tests {
             started_at: Utc::now(),
             finished_at: Utc::now(),
             exit_status: Some(1),
-            stdout_summary: Some("[ERROR] Add CLOUD_PROBE_OK to README.md\nuihusk • 55s ago\nno diff".to_string()),
+            stdout_summary: Some(
+                "[ERROR] Add CLOUD_PROBE_OK to README.md\nuihusk • 55s ago\nno diff".to_string(),
+            ),
             stderr_summary: None,
         };
 

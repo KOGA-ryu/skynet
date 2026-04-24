@@ -87,6 +87,24 @@ This probe still enforces the same preflight truth as the live proof:
 - allowed fetch remote binding
 - pushed `HEAD`
 
+## Codex Cloud Canary
+
+Use the canary when you want the smallest live proof of repository diffability.
+It bypasses packet/schema logic and asks Codex Cloud to write exactly one file
+in a visible tracked path, while still persisting the run, traces, and audit
+events through `cleanroom.db`.
+
+```bash
+cd ~/dev/skynet
+CODEX_CLOUD_ENV_ID=6940d1f248c48191af000707ccee3b05 cargo run --bin codex_cloud_canary -- --db-path cleanroom.db --canary-id canary-001
+```
+
+Interpretation:
+
+- success means the environment can produce at least one diff for this repo
+- `cloud_no_diff` means the environment still cannot produce any diff for this
+  repo/environment binding
+
 ## First Local Build
 
 Build the derived catalog from the mounted NAS wiki:

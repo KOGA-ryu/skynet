@@ -1932,4 +1932,89 @@ mod tests {
             Some(ReviewId("rev_link".to_string()))
         );
     }
+
+    #[test]
+    fn replay_loads_canary_cloud_run_without_packet_body() {
+        let mut db = Database::open(":memory:").unwrap();
+        let packet_id = PacketId::new("codex-canary:canary-001");
+        let run = CloudTaskRun {
+            cloud_run_id: "cloudrun_pkt_canary_attempt_001".to_string(),
+            packet_id: packet_id.clone(),
+            attempt_index: 1,
+            task_id: Some("task_e_canary".to_string()),
+            task_url: Some("https://chatgpt.com/codex/tasks/task_e_canary".to_string()),
+            environment_id: Some("env_123".to_string()),
+            matched_remote_identity: Some("github.com/owner/repo".to_string()),
+            current_head_sha: Some("abc123".to_string()),
+            current_branch: Some("master".to_string()),
+            head_contained_in_allowed_remote_ref: Some(true),
+            resolution_method: "stdout_task_url".to_string(),
+            handoff_mode: "direct_cli_canary_v1".to_string(),
+            packet_path: "<canary:none>".to_string(),
+            schema_path: "<canary:none>".to_string(),
+            output_path: "codex_apply_out/cloud_canary.canary-001.txt".to_string(),
+            allowed_apply_paths: vec!["codex_apply_out/cloud_canary.canary-001.txt".to_string()],
+            new_apply_paths: vec!["codex_apply_out/cloud_canary.canary-001.txt".to_string()],
+            submitted_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+            final_status: "cloud_no_diff".to_string(),
+            error_text: Some("no diff".to_string()),
+        };
+        db.save_cloud_task_run(&run).unwrap();
+        db.save_cloud_command_trace(
+            &packet_id,
+            &CloudCommandTrace {
+                trace_id: "trace_canary_exec".to_string(),
+                cloud_run_id: run.cloud_run_id.clone(),
+                attempt_index: 1,
+                command_kind: CloudCommandKind::Exec,
+                command_text: "codex cloud exec --branch master <prompt omitted>".to_string(),
+                started_at: Utc::now(),
+                finished_at: Utc::now(),
+                exit_status: Some(0),
+                stdout_summary: Some("https://chatgpt.com/codex/tasks/task_e_canary".to_string()),
+                stderr_summary: None,
+            },
+        )
+        .unwrap();
+        db.record_audit_event(
+            &packet_id.0,
+            "packet",
+            "cloud",
+            "cloud_canary_failed",
+            Some(
+                serde_json::json!({
+                    "task_id": "task_e_canary",
+                    "final_status": "cloud_no_diff",
+                    "expected_output_path": "codex_apply_out/cloud_canary.canary-001.txt",
+                    "actual_changed_paths": ["codex_apply_out/cloud_canary.canary-001.txt"],
+                })
+                .to_string(),
+            ),
+        )
+        .unwrap();
+
+        let replay = db.load_replay_bundle(&packet_id).unwrap();
+
+        assert!(replay.packet.is_none());
+        assert!(replay.result.is_none());
+        assert_eq!(replay.cloud_task_runs.len(), 1);
+        assert_eq!(
+            replay.cloud_task_runs[0].handoff_mode,
+            "direct_cli_canary_v1"
+        );
+        assert_eq!(
+            replay.cloud_task_runs[0].output_path,
+            "codex_apply_out/cloud_canary.canary-001.txt"
+        );
+        assert_eq!(replay.cloud_command_traces.len(), 1);
+        assert_eq!(
+            replay.cloud_command_traces[0].command_kind,
+            CloudCommandKind::Exec
+        );
+        assert!(replay
+            .audit_events
+            .iter()
+            .any(|event| event.action == "cloud_canary_failed"));
+    }
 }
