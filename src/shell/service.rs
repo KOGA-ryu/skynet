@@ -7,6 +7,9 @@ use crate::error::PipelineError;
 use crate::metadata::RuleBasedMetadata;
 use crate::model::{PacketId, QueueStatus, ReviewDecision};
 use crate::preflight::RuleBasedPreflight;
+use crate::review::{
+    compute_review_gate_state, mark_all_diff_states_reviewed, mark_all_evidence_states_reviewed,
+};
 use crate::shell::api::{
     milestone_capabilities, ActionReceiptDto, ApprovePacketParams, ClaimStoragePacketParams,
     ClaimStoragePacketResult, GetStorageViewParams, InitializeParams, InitializeResult,
@@ -596,42 +599,30 @@ fn acknowledge_claimed_packet_review(
     let reviewed_at = chrono::Utc::now();
 
     let mut diff_states = db.load_review_diff_states(packet_id)?;
-    for state in &mut diff_states {
-        state.reviewed = true;
-        state.reviewed_by = Some(reviewer.to_string());
-        state.reviewed_at = Some(reviewed_at);
+    mark_all_diff_states_reviewed(&mut diff_states, reviewer, reviewed_at);
+    for state in &diff_states {
         db.save_review_diff_state(state)?;
     }
 
     let mut evidence_states = db.load_review_evidence_states(packet_id)?;
-    for state in &mut evidence_states {
-        state.reviewed = true;
-        state.reviewed_by = Some(reviewer.to_string());
-        state.reviewed_at = Some(reviewed_at);
+    mark_all_evidence_states_reviewed(&mut evidence_states, reviewer, reviewed_at);
+    for state in &evidence_states {
         db.save_review_evidence_state(state)?;
     }
 
     if let Some(mut gate_state) = db.load_review_gate_state(packet_id)? {
-        let diff_reviewed =
-            !diff_states.is_empty() && diff_states.iter().all(|state| state.reviewed);
-        let evidence_reviewed =
-            !evidence_states.is_empty() && evidence_states.iter().all(|state| state.reviewed);
-        gate_state.diff_reviewed = diff_reviewed;
-        gate_state.evidence_reviewed = evidence_reviewed;
-        gate_state.active_diff_target_id = diff_states
-            .first()
-            .map(|state| state.diff_target_id.clone());
-        gate_state.active_evidence_id = evidence_states
-            .first()
-            .map(|state| state.evidence_id.clone());
-        gate_state.approve_enabled = gate_state.required_fields_loaded
-            && gate_state.validation_status == "pass"
-            && gate_state.blocker_count == 0
-            && diff_reviewed
-            && evidence_reviewed
-            && !gate_state.stale_flag
-            && !gate_state.dirty_flag;
-        gate_state.updated_at = reviewed_at;
+        let validation = db.load_validation(packet_id)?.ok_or_else(|| {
+            PipelineError::NotFound(format!("validation {} not found", packet_id.0))
+        })?;
+        gate_state = compute_review_gate_state(
+            packet_id,
+            &gate_state.packet_version,
+            &validation,
+            &diff_states,
+            &evidence_states,
+            gate_state.stale_flag,
+            gate_state.dirty_flag,
+        );
         db.save_review_gate_state(&gate_state)?;
     }
 

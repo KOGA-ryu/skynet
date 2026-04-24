@@ -4,12 +4,15 @@ use crate::metadata::{promote_to_wiki, MetadataEngine};
 use crate::model::{
     ApprovedPacket, PacketId, QueueStatus, RawDocument, ReplayBundle, ReviewArtifact,
     ReviewDecision, ReviewDiffState, ReviewEvidenceState, ReviewGateState, ReviewQueueItem,
-    ValidationIssue, ValidationReport, WikiNode,
+    ValidationReport, WikiNode,
 };
 use crate::packetizer::{PacketBuilder, PacketBuilderConfig};
 use crate::parser::Parser;
 use crate::preflight::LocalMarkerModel;
-use crate::review::Reviewer;
+use crate::review::{
+    blocking_issues, compute_review_gate_state, mark_all_diff_states_reviewed,
+    mark_all_evidence_states_reviewed, packet_version, Reviewer,
+};
 use crate::storage::Database;
 use crate::validation::Validator;
 
@@ -115,8 +118,9 @@ where
             for evidence_state in build_initial_evidence_states(&packet, &result)? {
                 self.db.save_review_evidence_state(&evidence_state)?;
             }
-            let gate_state = build_gate_state(
-                &packet,
+            let gate_state = compute_review_gate_state(
+                &packet.packet_id,
+                &packet_version(&packet.packet_id),
                 &validation,
                 &self.db.load_review_diff_states(&packet.packet_id)?,
                 &self.db.load_review_evidence_states(&packet.packet_id)?,
@@ -171,16 +175,18 @@ where
         let notes = notes.unwrap_or("").trim();
         let mut diff_states = self.db.load_review_diff_states(packet_id)?;
         let mut evidence_states = self.db.load_review_evidence_states(packet_id)?;
-        mark_all_diff_states_reviewed(&mut diff_states, &reviewer);
-        mark_all_evidence_states_reviewed(&mut evidence_states, &reviewer);
+        let reviewed_at = chrono::Utc::now();
+        mark_all_diff_states_reviewed(&mut diff_states, &reviewer, reviewed_at);
+        mark_all_evidence_states_reviewed(&mut evidence_states, &reviewer, reviewed_at);
         for diff_state in &diff_states {
             self.db.save_review_diff_state(diff_state)?;
         }
         for evidence_state in &evidence_states {
             self.db.save_review_evidence_state(evidence_state)?;
         }
-        let gate_state = build_gate_state(
-            &packet,
+        let gate_state = compute_review_gate_state(
+            &packet.packet_id,
+            &packet_version(&packet.packet_id),
             &validation,
             &diff_states,
             &evidence_states,
@@ -328,10 +334,6 @@ fn ensure_review_notes(notes: &str) -> Result<(), PipelineError> {
     Ok(())
 }
 
-fn packet_version(packet_id: &PacketId) -> String {
-    format!("version_for_{}", packet_id.0)
-}
-
 fn build_initial_diff_states(
     packet: &crate::model::CloudTaskPacket,
     result: &crate::model::CloudSummaryResult,
@@ -378,67 +380,6 @@ fn build_initial_evidence_states(
     Ok(evidence_states)
 }
 
-fn build_gate_state(
-    packet: &crate::model::CloudTaskPacket,
-    validation: &ValidationReport,
-    diff_states: &[ReviewDiffState],
-    evidence_states: &[ReviewEvidenceState],
-    stale_flag: bool,
-    dirty_flag: bool,
-) -> ReviewGateState {
-    let blocker_count = validation
-        .issues
-        .iter()
-        .filter(|issue| issue.blocking)
-        .count();
-    let diff_reviewed = !diff_states.is_empty() && diff_states.iter().all(|state| state.reviewed);
-    let evidence_reviewed =
-        !evidence_states.is_empty() && evidence_states.iter().all(|state| state.reviewed);
-    let required_fields_loaded = true;
-    let approve_enabled = required_fields_loaded
-        && validation.passed
-        && blocker_count == 0
-        && diff_reviewed
-        && evidence_reviewed
-        && !stale_flag
-        && !dirty_flag;
-    ReviewGateState {
-        packet_id: packet.packet_id.clone(),
-        packet_version: packet_version(&packet.packet_id),
-        required_fields_loaded,
-        validation_status: if validation.passed {
-            "pass".to_string()
-        } else {
-            "error".to_string()
-        },
-        blocker_count,
-        diff_reviewed,
-        evidence_reviewed,
-        stale_flag,
-        dirty_flag,
-        active_diff_target_id: diff_states
-            .iter()
-            .find(|state| !state.reviewed)
-            .or_else(|| diff_states.first())
-            .map(|state| state.diff_target_id.clone()),
-        active_evidence_id: evidence_states
-            .iter()
-            .find(|state| !state.reviewed)
-            .or_else(|| evidence_states.first())
-            .map(|state| state.evidence_id.clone()),
-        active_validation_issue_id: validation
-            .issues
-            .iter()
-            .find(|issue| issue.blocking)
-            .or_else(|| validation.issues.first())
-            .map(|issue| issue.issue_id.clone()),
-        approve_enabled,
-        reject_enabled: required_fields_loaded,
-        rework_enabled: required_fields_loaded,
-        updated_at: chrono::Utc::now(),
-    }
-}
-
 fn resolve_gate_snapshot(
     db: &mut Database,
     packet_id: &PacketId,
@@ -450,8 +391,9 @@ fn resolve_gate_snapshot(
     let diff_states = db.load_review_diff_states(packet_id)?;
     let evidence_states = db.load_review_evidence_states(packet_id)?;
     let prior = db.load_review_gate_state(packet_id)?;
-    let gate_state = build_gate_state(
-        &packet,
+    let gate_state = compute_review_gate_state(
+        &packet.packet_id,
+        &packet_version(&packet.packet_id),
         validation,
         &diff_states,
         &evidence_states,
@@ -466,33 +408,6 @@ fn resolve_gate_snapshot(
     );
     db.save_review_gate_state(&gate_state)?;
     Ok(gate_state)
-}
-
-fn mark_all_diff_states_reviewed(diff_states: &mut [ReviewDiffState], reviewer: &str) {
-    let reviewed_at = chrono::Utc::now();
-    for state in diff_states {
-        state.reviewed = true;
-        state.reviewed_by = Some(reviewer.to_string());
-        state.reviewed_at = Some(reviewed_at);
-    }
-}
-
-fn mark_all_evidence_states_reviewed(evidence_states: &mut [ReviewEvidenceState], reviewer: &str) {
-    let reviewed_at = chrono::Utc::now();
-    for state in evidence_states {
-        state.reviewed = true;
-        state.reviewed_by = Some(reviewer.to_string());
-        state.reviewed_at = Some(reviewed_at);
-    }
-}
-
-fn blocking_issues(validation: &ValidationReport) -> Vec<ValidationIssue> {
-    validation
-        .issues
-        .iter()
-        .filter(|issue| issue.blocking)
-        .cloned()
-        .collect()
 }
 
 #[cfg(test)]
