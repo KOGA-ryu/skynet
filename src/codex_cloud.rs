@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::cloud::CloudExecution;
 use crate::model::{
@@ -744,10 +745,23 @@ impl CodexCloudWorker {
         output_rel: &str,
         packet_json: &str,
     ) -> String {
+        let output_template = build_output_template(packet);
+        let work_unit_hints = build_work_unit_hints(packet);
         format!(
             r#"PACKET_ID: {}
 HANDOFF_MODE: inline_packet_visible_output_v3
 WRITE_EXACTLY_ONE_FILE: {}
+WRITE_RULE: create or overwrite that file and leave every other repo file unchanged
+
+Task:
+- create the JSON file
+- make sure the task produces a git diff
+- a minimal valid JSON file is better than no diff
+
+Recommended write method:
+1. run `mkdir -p codex_apply_out`
+2. write the JSON file directly
+3. verify the file exists before finishing
 
 Use only the inline packet JSON below.
 Do not read packet or schema files from disk.
@@ -756,15 +770,31 @@ Do not modify any other file.
 Do not print any prose.
 Use only evidence from the packet's visible content.
 Return one fragment per work unit.
+Do not invent ids; reuse the exact ids from the output template.
+If unsure about wording, keep the summary conservative and add unresolved questions.
+If unsure about evidence spans, keep evidence node ids valid and use start 0 end 1.
 
 BEGIN_OUTPUT_CONTRACT
 {{"packet_id":"{}","model_name":"<string>","fragments":[{{"target_node_id":"<string>","summary_title":"<string>","summary_text":"<string>","unresolved_questions":["<string>"],"evidence":[{{"node_id":"<string>","start":0,"end":0}}]}}]}}
 END_OUTPUT_CONTRACT
 
+BEGIN_OUTPUT_TEMPLATE
+{}
+END_OUTPUT_TEMPLATE
+
+BEGIN_WORK_UNIT_HINTS
+{}
+END_WORK_UNIT_HINTS
+
 BEGIN_CLEANROOM_PACKET_JSON
 {}
 END_CLEANROOM_PACKET_JSON"#,
-            packet.packet_id.0, output_rel, packet.packet_id.0, packet_json,
+            packet.packet_id.0,
+            output_rel,
+            packet.packet_id.0,
+            output_template,
+            work_unit_hints,
+            packet_json,
         )
     }
 
@@ -932,6 +962,60 @@ END_CLEANROOM_PACKET_JSON"#,
             },
         }
     }
+}
+
+fn build_output_template(packet: &CloudTaskPacket) -> String {
+    let fragments = packet
+        .work_units
+        .iter()
+        .map(|work_unit| {
+            let fallback_node_id = work_unit
+                .visible_node_ids
+                .first()
+                .cloned()
+                .unwrap_or_else(|| work_unit.target_node_id.clone());
+            json!({
+                "target_node_id": work_unit.target_node_id.0,
+                "summary_title": "",
+                "summary_text": "",
+                "unresolved_questions": [],
+                "evidence": [
+                    {
+                        "node_id": fallback_node_id.0,
+                        "start": 0,
+                        "end": 1
+                    }
+                ]
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::to_string_pretty(&json!({
+        "packet_id": packet.packet_id.0,
+        "model_name": "codex-cloud",
+        "fragments": fragments
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
+fn build_work_unit_hints(packet: &CloudTaskPacket) -> String {
+    packet
+        .work_units
+        .iter()
+        .map(|work_unit| {
+            let visible_ids = work_unit
+                .visible_node_ids
+                .iter()
+                .map(|node_id| node_id.0.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "TARGET_NODE_ID={} | ALLOWED_EVIDENCE_NODE_IDS=[{}]",
+                work_unit.target_node_id.0, visible_ids
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1696,7 +1780,18 @@ mod tests {
         let packet = CloudTaskPacket {
             packet_id: PacketId("pkt_inline".to_string()),
             document_id: DocumentId("doc_inline".to_string()),
-            work_units: vec![],
+            work_units: vec![crate::model::WorkUnit {
+                work_unit_id: "wu_inline".to_string(),
+                target_node_id: NodeId("node_target".to_string()),
+                visible_node_ids: vec![
+                    NodeId("node_context".to_string()),
+                    NodeId("node_target".to_string()),
+                ],
+                context_node_ids: vec![NodeId("node_context".to_string())],
+                trim_map: vec![],
+                rendered_text: "rendered".to_string(),
+                instructions: vec!["instruction".to_string()],
+            }],
             style_contract: "style".to_string(),
             completion_contract: "done".to_string(),
         };
@@ -1715,6 +1810,14 @@ mod tests {
         assert!(prompt.contains("END_OUTPUT_CONTRACT"));
         assert!(prompt.contains("BEGIN_CLEANROOM_PACKET_JSON"));
         assert!(prompt.contains("END_CLEANROOM_PACKET_JSON"));
+        assert!(prompt.contains("BEGIN_OUTPUT_TEMPLATE"));
+        assert!(prompt.contains("END_OUTPUT_TEMPLATE"));
+        assert!(prompt.contains("BEGIN_WORK_UNIT_HINTS"));
+        assert!(prompt.contains("END_WORK_UNIT_HINTS"));
+        assert!(prompt.contains("mkdir -p codex_apply_out"));
+        assert!(prompt.contains("minimal valid JSON file is better than no diff"));
+        assert!(prompt.contains(r#""target_node_id": "node_target""#));
+        assert!(prompt.contains("TARGET_NODE_ID=node_target | ALLOWED_EVIDENCE_NODE_IDS=[node_context, node_target]"));
         assert!(prompt.contains(&packet_json));
         assert!(!prompt.contains("Read the packet at:"));
         assert!(!prompt.contains("schema at:"));
